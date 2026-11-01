@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Comic Translate VN</title>
+  <style>
+    body {
+      width: 350px;
+      margin: 0;
+      padding: 14px;
+      font-family: 'Be Vietnam Pro', 'Noto Sans', system-ui, -apple-system, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      font-size: 13px;
+    }
+    h1 {
+      font-size: 16px;
+      margin: 0 0 8px 0;
+      color: #fb923c;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    .unsupported-banner {
+      display: none;
+      background: #7f1d1d;
+      border: 1px solid #ef4444;
+      color: #fef2f2;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 10px;
+      font-weight: 600;
+    }
+    .btn {
+      width: 100%;
+      padding: 8px 10px;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 6px;
+      font-size: 12px;
+    }
+    .btn-primary {
+      background: #ea580c;
+      color: #ffffff;
+    }
+    .btn-secondary {
+      background: #334155;
+      color: #f8fafc;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 4px 0;
+    }
+    input[type="text"],
+    textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 6px 8px;
+      border-radius: 6px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: #f8fafc;
+      font-size: 12px;
+      margin-top: 4px;
+      font-family: inherit;
+    }
+    textarea {
+      min-height: 68px;
+      resize: vertical;
+      line-height: 1.4;
+    }
+    .preset-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin: 6px 0 4px 0;
+    }
+    .preset-chip {
+      background: #0f172a;
+      color: #fdba74;
+      border: 1px solid #475569;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .preset-chip:hover {
+      background: #334155;
+    }
+    .badge {
+      background: #065f46;
+      color: #a7f3d0;
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Comic Translate VN</h1>
+
+  <div id="unsupported-banner" class="unsupported-banner" data-testid="unsupported-banner">
+    Trang web chưa được hỗ trợ
+    <button type="button" id="btn-request-site" class="btn btn-secondary" data-testid="btn-request-site">
+      Yêu cầu hỗ trợ site này
+    </button>
+    <div id="request-site-msg" style="font-size: 11px; margin-top: 4px; font-weight: 400;"></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <span>Trạng thái Extension</span>
+      <input type="checkbox" id="toggle-enabled" checked />
+    </div>
+    <div class="row">
+      <span>Chế độ Debug Selector (F12 thay thế)</span>
+      <input type="checkbox" id="toggle-debug-selector" />
+    </div>
+  </div>
+
+  <!-- Khung Ngữ cảnh Truyện (1 ô textarea duy nhất + 4 nút Quick Preset Chips) -->
+  <div class="card">
+    <div class="row">
+      <strong>Ngữ cảnh Truyện &amp; Xưng hô</strong>
+      <span id="popup-context-counter" style="font-size: 11px; color: #94a3b8;">0/500</span>
+    </div>
+    <div class="preset-chips">
+      <button type="button" class="preset-chip" data-preset-id="tu_tien" data-testid="popup-chip-tu_tien">+ Tu tiên/Cổ trang</button>
+      <button type="button" class="preset-chip" data-preset-id="do_thi" data-testid="popup-chip-do_thi">+ Đô thị/Hiện đại</button>
+      <button type="button" class="preset-chip" data-preset-id="hoc_duong" data-testid="popup-chip-hoc_duong">+ Học đường</button>
+      <button type="button" class="preset-chip" data-preset-id="he_thong" data-testid="popup-chip-he_thong">+ Hệ thống/Murim</button>
+    </div>
+    <textarea
+      id="input-custom-context"
+      data-testid="input-custom-context"
+      maxlength="500"
+      placeholder="Truyện Đại Quản Gia Là Ma Hoàng. Thể loại: Tu tiên, trùng sinh. Nam chính Trác Phàm xưng ta - ngươi/bổn tọa..."
+    ></textarea>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <strong>Tài khoản &amp; Credit</strong>
+      <span id="auth-status-badge" class="badge">Chưa đăng nhập</span>
+    </div>
+    <div id="credit-summary" data-testid="credit-summary" style="margin-top: 6px;">
+      Tổng Credit: <strong id="credit-total">0</strong>
+      (Gói: <span id="credit-sub">0</span> | Lẻ: <span id="credit-onetime">0</span>)
+    </div>
+    <button type="button" id="btn-google-login" class="btn btn-primary">
+      Đăng nhập với Google
+    </button>
+    <button type="button" id="btn-topup-credit" class="btn btn-secondary">
+      Nạp thêm Credit
+    </button>
+  </div>
+
+  <div class="card">
+    <strong>Trang hỗ trợ chính thức</strong>
+    <ul style="margin: 6px 0 0 18px; padding: 0; font-size: 12px; color: #cbd5e1;">
+      <li>baozimh.org (Trung -&gt; Việt)</li>
+      <li>hivetoons.org (Anh -&gt; Việt)</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <strong>Cấu hình Server / Token (Test &amp; Dev)</strong>
+    <input type="text" id="input-server-url" placeholder="http://127.0.0.1:8000" />
+    <input type="text" id="input-access-token" placeholder="Access Token (Bearer)" />
+    <input type="text" id="input-refresh-token" placeholder="Refresh Token" />
+    <button type="button" id="btn-save-config" class="btn btn-secondary" data-testid="btn-save-config">
+      Lưu cấu hình
+    </button>
+  </div>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

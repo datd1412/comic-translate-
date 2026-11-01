@@ -1,0 +1,5 @@
+paddlepaddle==3.2.0
+paddleocr==3.7.0
+paddlex==3.7.2
+Pillow>=10.0.0
+pytest>=8.0.0

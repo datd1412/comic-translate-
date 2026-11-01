@@ -1,0 +1,24 @@
+{
+  "_comment": "Ground truth tiếng Trung do AI chép, chưa kiểm bằng người. Nếu chưa kẻ bbox thì có thể bỏ trường bbox, eval_ocr.py sẽ so khớp greedy theo văn bản.",
+  "images": {
+    "page_01.jpg": [
+      {
+        "id": "b1",
+        "bbox": [120, 180, 420, 360],
+        "text": "你终于来了！"
+      },
+      {
+        "id": "b2",
+        "bbox": [480, 520, 760, 710],
+        "text": "我已经等了你整整三天。"
+      }
+    ],
+    "page_02.jpg": [
+      {
+        "id": "b1",
+        "bbox": [90, 140, 510, 320],
+        "text": "Wait a second! Where are you going?"
+      }
+    ]
+  }
+}

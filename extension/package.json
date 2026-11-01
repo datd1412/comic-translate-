@@ -1,0 +1,25 @@
+{
+  "name": "comic-translate-vn-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Chrome Extension Manifest V3 dịch truyện tranh baozimh.org (Trung-Việt) và hivetoons.org (Anh-Việt)",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "check:font": "node scripts/check-vn-font.mjs",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "test": "npm run check:font && npm run test:unit && npm run build && npm run test:e2e"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/chrome": "^0.0.280",
+    "@types/node": "^22.10.0",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "wxt": "^0.19.19"
+  }
+}
