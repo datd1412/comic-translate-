@@ -280,18 +280,17 @@ def _are_lines_in_same_bubble(a: ShiftedLine, b: ShiftedLine) -> bool:
         if col_w / min_w > 2.5:
             return False
 
-        # Khoảng cách ngang giữa hai cột trong cùng bong bóng
-        if gap_x > col_w * 2.0 or gap_x > 85.0:
+        # Khoảng cách ngang giữa hai cột trong cùng bong bóng (rất sát nhau)
+        if gap_x > col_w * 1.35 or gap_x > 38.0:
             return False
 
-        # Kiểm tra căn lề / chồng lấn dọc: hai cột trong cùng bong bóng có độ phủ Y hoặc chung lề trên/dưới
+        # Hai cột cạnh nhau trong cùng bong bóng bắt buộc phải có vùng phủ theo trục dọc Y
+        # và không có khoảng cách dọc (không thể cột nọ nằm hẳn phía trên cột kia qua khung tranh)
         min_h = max(1.0, min(a.height, b.height))
-        y_aligned = (
-            (overlap_y / min_h >= 0.15)
-            or (abs(a.bbox[1] - b.bbox[1]) <= col_w * 2.5)
-            or (abs(a.bbox[3] - b.bbox[3]) <= col_w * 2.5)
-        )
-        return y_aligned and gap_y <= col_w * 1.5
+        if gap_y > 10.0 or (overlap_y / min_h < 0.20):
+            return False
+
+        return True
 
     if not a_vert and not b_vert:
         # Hai dòng chữ ngang: chiều cao dòng đại diện cho cỡ chữ (font size)
@@ -429,11 +428,14 @@ def group_lines_into_blocks(
     for comp in clusters.values():
         vertical_block = _is_block_vertical(comp, lang=lang)
         if vertical_block:
-            # Chữ dọc (ja hoặc zh cột dọc): sắp các cột từ PHẢI sang TRÁI, nếu cùng cột thì từ trên xuống
-            comp.sort(key=lambda ln: (-round(ln.center_x / max(1.0, ln.width * 0.5)), ln.bbox[1]))
+            # Chữ dọc (ja hoặc zh cột dọc): sắp các cột từ PHẢI sang TRÁI, nếu cùng cột thì từ trên xuống.
+            # Dùng avg_col_w đồng nhất cho toàn khối để tránh sai lệch bucket giữa các cột.
+            avg_col_w = max(1.0, statistics.mean(ln.width for ln in comp))
+            comp.sort(key=lambda ln: (-round(ln.center_x / (avg_col_w * 0.7)), ln.bbox[1]))
         else:
             # Chữ ngang (en, ko, zh ngang): sắp từ TRÊN xuống DƯỚI, trái sang phải
-            comp.sort(key=lambda ln: (round(ln.center_y / max(1.0, ln.height * 0.5)), ln.bbox[0]))
+            avg_line_h = max(1.0, statistics.mean(ln.height for ln in comp))
+            comp.sort(key=lambda ln: (round(ln.center_y / (avg_line_h * 0.7)), ln.bbox[0]))
 
         joiner = "" if is_cjk else " "
         combined_text = joiner.join(ln.text.strip() for ln in comp if ln.text.strip()).strip()
