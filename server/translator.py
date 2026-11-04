@@ -100,9 +100,8 @@ def build_comic_translation_prompt(
         "4. NHẬN DIỆN CHỮ PHỒN THỂ & NGỮ NGHĨA TRUYỆN TRANH:\n"
         "   Văn bản có thể là chữ Hán Phồn Thể (như 鬍/鬍子 = râu/để râu, 輪迴/循環 = vòng lặp thời gian, 戲劇 = kịch...). "
         "Hãy nhận diện đúng từ vựng theo ngữ cảnh câu chuyện. Tuyệt đối không dịch sai lệch thành 'rùa', 'nhẹ nhàng' hay 'nuôi con'.\n"
-        "5. XỬ LÝ CHỮ IN ÁO / NHÃN HIỆU / LOGO NGOÀI LỀ:\n"
-        "   Nếu gặp chữ tiếng Anh in trên áo/đồ vật (ví dụ tên nhãn hiệu 'NUMBER GIRL') hoặc logo mép tranh, hãy giữ nguyên hoặc dịch phù hợp, "
-        "TUYỆT ĐỐI KHÔNG tự bịa thành từ tượng thanh (SFX) hay tiếng động như 'sột so'.\n"
+        "5. XỬ LÝ CHỮ IN ÁO / NHÃN HIỆU / LOGO / ĐỐM NHIỄU (GIBBERISH & NOISE):\n"
+        "   Nếu gặp chữ tiếng Anh in trên áo/đồ vật (như 'NUMBER GIRL', 'MBERGA', 'HMEESGR', 'MERGR') hoặc các ký tự rác/vô nghĩa do OCR nhận diện sai, hãy giữ nguyên chữ gốc hoặc để trống (\"\"). TUYỆT ĐỐI KHÔNG tự bịa thành câu thoại vô nghĩa (như '3 nhé', 'hoắc chạy đến') hay từ tượng thanh (SFX) vô lý.\n"
         "6. VĂN PHONG TRUYỆN TRANH TỰ NHIÊN & THOÁT Ý:\n"
         "   Dùng khẩu ngữ tiếng Việt đời thường, biểu cảm sống động theo tâm lý nhân vật (vui, buồn, tức giận, mỉa mai). "
         "Tuân thủ bối cảnh thể loại nếu có cung cấp ở trên. Tránh dịch cứng nhắc từng từ kiểu Google Dịch.\n"
@@ -234,7 +233,7 @@ async def translate_blocks_with_llm(
                 "Authorization": f"Bearer {settings.DEEPSEEK_API_KEY}",
                 "Content-Type": "application/json",
             }
-            llm_temp = float(getattr(settings, "LLM_TEMPERATURE", 0.5))
+            llm_temp = float(getattr(settings, "LLM_TEMPERATURE", 0.2))
             payload = {
                 "model": settings.DEEPSEEK_MODEL,
                 "messages": [
@@ -260,7 +259,7 @@ async def translate_blocks_with_llm(
             return parse_llm_translation_output(raw_text, blocks)
 
         # Mặc định: Google Gemini REST API v1beta chuẩn với key trên URL query
-        raw_model = (settings.GEMINI_MODEL or "gemini-1.5-flash").strip()
+        raw_model = (settings.GEMINI_MODEL or "gemini-3.1-flash-lite").strip()
         model_name = raw_model[len("models/"):] if raw_model.startswith("models/") else raw_model
 
         gemini_url = (
@@ -271,7 +270,7 @@ async def translate_blocks_with_llm(
             "Content-Type": "application/json",
             "x-goog-api-key": settings.GEMINI_API_KEY or "missing-gemini-key",
         }
-        llm_temp = float(getattr(settings, "LLM_TEMPERATURE", 0.5))
+        llm_temp = float(getattr(settings, "LLM_TEMPERATURE", 0.2))
         payload = {
             "contents": [
                 {
@@ -287,9 +286,8 @@ async def translate_blocks_with_llm(
         }
         resp = await client.post(gemini_url, json=payload, headers=headers)
         if resp.status_code == 404:
-            # Dự phòng: Nếu model cấu hình (ví dụ gemini-1.5-flash / gemini-2.5-flash)
-            # bị Google khai tử trên API v1beta, tự động fallback sang model Flash đang hoạt động
-            for fallback_model in ["gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-3.8-flash"]:
+            # Dự phòng: Nếu model cấu hình bị Google khai tử trên API v1beta, tự động fallback
+            for fallback_model in ["gemini-3.1-flash-lite", "gemini-3-flash-preview", "gemini-flash-lite-latest", "gemini-3.8-flash"]:
                 if fallback_model == model_name:
                     continue
                 fallback_url = (

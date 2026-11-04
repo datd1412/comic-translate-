@@ -68,12 +68,12 @@ class Settings(BaseSettings):
     # Nhà cung cấp LLM dịch thuật ("gemini" hoặc "deepseek")
     LLM_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-1.5-flash"
+    GEMINI_MODEL: str = "gemini-3.1-flash-lite"
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
     DEEPSEEK_MODEL: str = "deepseek-chat"
     LLM_TIMEOUT_SECONDS: float = 45.0
-    LLM_TEMPERATURE: float = 0.5
+    LLM_TEMPERATURE: float = 0.2
 
     # Cấu hình Credit & Chống lạm dụng
     DEFAULT_FREE_CREDITS: int = 20
