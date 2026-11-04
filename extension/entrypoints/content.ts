@@ -14,6 +14,7 @@ import {
 } from "../src/core/adapters";
 import {
   adjustVerticalBoundingBox,
+  resolveBoxCollisions,
   sampleBorderBackgroundColor,
   scaleBboxToDisplay,
 } from "../src/core/geometry";
@@ -556,15 +557,29 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
 
     const rgbaPixels = trySampleImagePixels(img);
 
-    for (const blk of blocks) {
-      // 1. Nhận diện Bounding Box dọc (Vertical Bubble) và mở rộng chiều rộng
+    // Bước 1: Quy đổi tọa độ và mở rộng thích ứng theo độ dài câu dịch tiếng Việt
+    const candidateBoxes = blocks.map((blk) => {
       const baseScaled = scaleBboxToDisplay(blk.bbox, natW, natH, dispW, dispH);
-      const scaled = adjustVerticalBoundingBox(baseScaled, dispW, dispH, {
+      const cleanText = (blk.translation || "").trim();
+      return adjustVerticalBoundingBox(baseScaled, dispW, dispH, {
         aspectRatioThreshold: 1.4,
-        minWidth: 85, // Giới hạn min-width từ 70px - 100px
+        minWidth: 85,
         minExpandRatio: 1.6,
         maxExpandRatio: 2.2,
+        maxWidth: 180,
+        text: cleanText,
+        allowHeightExpansion: true,
       });
+    });
+
+    // Bước 2: Khử va chạm và chồng lấn giữa các ô thoại
+    const resolvedBoxes = resolveBoxCollisions(candidateBoxes, dispW, dispH, 4);
+
+    // Bước 3: Render từng ô thoại với auto-fit typography không gây layout thrashing
+    for (let i = 0; i < blocks.length; i += 1) {
+      const blk = blocks[i];
+      const scaled = resolvedBoxes[i] || candidateBoxes[i];
+      const cleanText = (blk.translation || "").trim();
 
       const colors = sampleBorderBackgroundColor(
         rgbaPixels,
@@ -584,7 +599,6 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
       boxEl.style.backgroundColor = colors.bgCss;
       boxEl.style.color = colors.textCss;
 
-      // 2. Ràng buộc CSS hiển thị chữ Latin bắt buộc
       boxEl.style.setProperty("white-space", "normal", "important");
       boxEl.style.setProperty("word-break", "normal", "important");
       boxEl.style.setProperty("overflow-wrap", "break-word", "important");
@@ -595,30 +609,36 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
       boxEl.style.setProperty("align-items", "center", "important");
       boxEl.style.setProperty("justify-content", "center", "important");
 
-      const cleanText = (blk.translation || "").trim();
-      boxEl.textContent = cleanText;
-
-      // 3. Tính toán Font Size động (Auto-scaling):
-      // Ước lượng fontSize khởi điểm dựa trên diện tích box và độ dài văn bản
-      const minFont = 9;
-      const maxFont = Math.min(26, Math.max(14, Math.floor(scaled.height * 0.75)));
-      let currentFont = estimateFontSizeFromArea(cleanText, scaled.width, scaled.height, {
-        minFontSize: minFont,
-        maxFontSize: maxFont,
+      // Tính toán cỡ chữ và ngắt dòng bằng fitTextInBox trong RAM (0 reflows)
+      const fitted = fitTextInBox(cleanText, scaled.width, scaled.height, {
+        minFontSize: 9,
+        maxFontSize: Math.min(26, Math.max(14, Math.floor(scaled.height * 0.75))),
+        lineHeightRatio: 1.25,
+        paddingPx: 4,
       });
 
-      boxEl.style.fontSize = `${currentFont}px`;
+      // Nếu văn bản nhiều dòng vượt quá chiều cao ô, mở rộng thêm để không bao giờ bị cắt chữ
+      if (!fitted.fitsWithoutOverflow && fitted.neededHeightPx > scaled.height) {
+        const extraH = Math.min(scaled.height * 1.35, fitted.neededHeightPx) - scaled.height;
+        const finalH = scaled.height + extraH;
+        boxEl.style.height = `${Math.round(finalH)}px`;
+        const newTop = Math.max(0, scaled.top - extraH / 2);
+        boxEl.style.top = `${Math.round(newTop)}px`;
+      }
+
+      boxEl.style.fontSize = `${fitted.fontSizePx}px`;
+      boxEl.style.lineHeight = `${fitted.lineHeightPx}px`;
+      boxEl.textContent = cleanText;
+
       overlayLayer.appendChild(boxEl);
 
-      // Vòng lặp giảm font-size từ max_font/ước lượng xuống cho đến khi
-      // scrollHeight <= offsetHeight và scrollWidth <= offsetWidth
-      if (boxEl.offsetHeight > 0 && boxEl.offsetWidth > 0) {
-        while (
-          currentFont > minFont &&
-          (boxEl.scrollHeight > boxEl.offsetHeight || boxEl.scrollWidth > boxEl.offsetWidth)
-        ) {
-          currentFont -= 0.5;
-          boxEl.style.fontSize = `${currentFont}px`;
+      // Dự phòng vi sai đo lường DOM: nếu vẫn còn overflow nhẹ, hạ cỡ font xuống 1 bước
+      if (
+        boxEl.scrollHeight > boxEl.offsetHeight ||
+        boxEl.scrollWidth > boxEl.offsetWidth
+      ) {
+        if (fitted.fontSizePx > 9) {
+          boxEl.style.fontSize = `${Math.max(9, fitted.fontSizePx - 0.5)}px`;
         }
       }
     }
