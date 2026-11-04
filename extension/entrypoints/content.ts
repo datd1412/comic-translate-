@@ -271,7 +271,7 @@ function injectStyles(): void {
       hyphens: none !important;
       line-height: 1.25 !important;
       border-radius: 6px;
-      padding: 4px 6px;
+      padding: 3px 4px;
       font-family: ${VIETNAMESE_FONT_FAMILY};
       font-weight: 600;
       overflow: hidden;
@@ -557,7 +557,7 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
 
     const rgbaPixels = trySampleImagePixels(img);
 
-    // Bước 1: Quy đổi tọa độ và mở rộng thích ứng theo độ dài câu dịch tiếng Việt
+    // Bước 1: Quy đổi tọa độ và mở rộng vừa vặn với khuôn khổ bong bóng thoại
     const candidateBoxes = blocks.map((blk) => {
       const baseScaled = scaleBboxToDisplay(blk.bbox, natW, natH, dispW, dispH);
       const cleanText = (blk.translation || "").trim();
@@ -566,13 +566,14 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
         minWidth: 85,
         minExpandRatio: 1.6,
         maxExpandRatio: 2.2,
-        maxWidth: 180,
+        maxWidth: 115,
         text: cleanText,
         allowHeightExpansion: true,
       });
     });
 
-    // Bước 2: Khử va chạm và chồng lấn giữa các ô thoại
+    // Bước 2: Khử va chạm bằng phân vùng hướng tâm (Inward Partitioning)
+    // Giữ nguyên biên ngoài cùng của cụm ô thoại để không bao giờ bị đẩy tràn qua rãnh tranh
     const resolvedBoxes = resolveBoxCollisions(candidateBoxes, dispW, dispH, 4);
 
     // Bước 3: Render từng ô thoại với auto-fit typography không gây layout thrashing
@@ -603,23 +604,30 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
       boxEl.style.setProperty("word-break", "normal", "important");
       boxEl.style.setProperty("overflow-wrap", "break-word", "important");
       boxEl.style.setProperty("hyphens", "none", "important");
-      boxEl.style.setProperty("line-height", "1.25", "important");
+      boxEl.style.setProperty("line-height", "1.22", "important");
       boxEl.style.setProperty("text-align", "center", "important");
       boxEl.style.setProperty("display", "flex", "important");
       boxEl.style.setProperty("align-items", "center", "important");
       boxEl.style.setProperty("justify-content", "center", "important");
+      boxEl.style.setProperty("padding", "3px 4px", "important");
 
-      // Tính toán cỡ chữ và ngắt dòng bằng fitTextInBox trong RAM (0 reflows)
+      // Cỡ chữ đồng đều cho thoại truyện tranh (10px - 13.5px), không phóng to dị biệt lên 26px
+      const isTitleBlock =
+        blk.source_text?.length <= 8 &&
+        (scaled.height > 200 || scaled.width > 200);
+      const targetMaxFont = isTitleBlock ? 20 : 13.5;
+      const targetMinFont = 9.5;
+
       const fitted = fitTextInBox(cleanText, scaled.width, scaled.height, {
-        minFontSize: 9,
-        maxFontSize: Math.min(26, Math.max(14, Math.floor(scaled.height * 0.75))),
-        lineHeightRatio: 1.25,
-        paddingPx: 4,
+        minFontSize: targetMinFont,
+        maxFontSize: targetMaxFont,
+        lineHeightRatio: 1.22,
+        paddingPx: 3,
       });
 
-      // Nếu văn bản nhiều dòng vượt quá chiều cao ô, mở rộng thêm để không bao giờ bị cắt chữ
+      // Bù chiều cao vi sai tối đa 6px nếu thiếu chút ít ở cỡ sàn 9.5px, không tràn sang panel kế bên
       if (!fitted.fitsWithoutOverflow && fitted.neededHeightPx > scaled.height) {
-        const extraH = Math.min(scaled.height * 1.35, fitted.neededHeightPx) - scaled.height;
+        const extraH = Math.min(6, fitted.neededHeightPx - scaled.height);
         const finalH = scaled.height + extraH;
         boxEl.style.height = `${Math.round(finalH)}px`;
         const newTop = Math.max(0, scaled.top - extraH / 2);
@@ -632,7 +640,7 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
 
       overlayLayer.appendChild(boxEl);
 
-      // Dự phòng vi sai đo lường DOM: nếu vẫn còn overflow nhẹ, hạ cỡ font xuống 1 bước
+      // Dự phòng vi sai đo lường DOM: nếu vẫn còn overflow nhẹ, hạ cỡ font xuống 1 bước 0.5px
       if (
         boxEl.scrollHeight > boxEl.offsetHeight ||
         boxEl.scrollWidth > boxEl.offsetWidth
