@@ -9,6 +9,7 @@ import {
   isComicCandidateImage,
   matchSiteAdapter,
   MAX_CUSTOM_CONTEXT_LENGTH,
+  type PreviousLineItem,
   type ContextPresetChip,
   type SiteAdapter,
 } from "../src/core/adapters";
@@ -363,6 +364,8 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
   let debugSelectorMode = false;
   let customSelector = "";
   let customContextText = "";
+  // Bộ nhớ ngữ cảnh trượt (Rolling Context) lưu tối đa 8 câu thoại gần nhất trong RAM
+  const rollingDialogueContext: PreviousLineItem[] = [];
 
   // Hướng đọc: Manga (RTL - Phải sang Trái) hoặc Manhwa (LTR - Trái sang Phải)
   const host = window.location.hostname.toLowerCase();
@@ -694,7 +697,8 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
 
         const contextPayload = buildTranslationContextPayload(
           document.title || adapter.displayName,
-          customContextText
+          customContextText,
+          rollingDialogueContext
         );
 
         const bgResp = await chrome.runtime.sendMessage({
@@ -718,6 +722,17 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
 
       if (res.value) {
         item.blocks = res.value;
+        // Cập nhật bộ nhớ trượt: lưu lại các câu thoại dịch hợp lệ để trang sau kế thừa
+        for (const blk of res.value) {
+          const src = (blk.source_text || "").trim();
+          const trans = (blk.translation || "").trim();
+          if (src && trans && src.length >= 2) {
+            rollingDialogueContext.push({ source_text: src, translation: trans });
+          }
+        }
+        while (rollingDialogueContext.length > 8) {
+          rollingDialogueContext.shift();
+        }
         item.isTranslating = false;
         item.isTranslated = true;
         item.img.dataset.isTranslating = "false";

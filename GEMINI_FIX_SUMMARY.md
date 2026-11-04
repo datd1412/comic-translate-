@@ -910,6 +910,36 @@ Bổ sung 4 quy tắc bắt buộc chuyên sâu cho truyện tranh:
   - Tự động hiển thị trên cả thanh công cụ nổi trong trang đọc truyện (`contentDrawer`) và giao diện Popup Extension.
   - Kiểm thử Unit test Extension: 13/13 passed. Build chrome-mv3 thành công.
 
+---
+
+## 10. Triển khai Bộ nhớ Ngữ cảnh Trượt (Rolling Context) & Khắc phục Dịch Chữ Phồn Thể
+
+**Ngày thực hiện:** 04/11/2026  
+**Mục tiêu:** Giữ mạch xưng hô và nội dung liền mạch giữa các trang truyện kề nhau (Rolling Context), khắc phục triệt để lỗi dịch sai nghĩa chữ Hán phồn thể (`鬍子` thành rùa/nhẹ nhàng) và lỗi dịch chữ in áo phông thành tiếng động (`NUMBER GIRL` thành "sột so").
+
+### 10.1. Cơ chế Rolling Context trong Chrome Extension (`extension/entrypoints/content.ts` & `adapters.ts`)
+- **Nguyên lý:**
+  - Tạo mảng `rollingDialogueContext: PreviousLineItem[]` lưu tạm trong RAM của Content Script (tối đa 8 câu thoại hợp lệ gần nhất).
+  - Khi người dùng cuộn hoặc bấm dịch trang tiếp theo, Extension tự động nạp `rollingDialogueContext` vào `contextPayload.previous_lines`.
+  - Background Script chuyển tiếp `context_json` lên Server trong `POST /api/v1/page/translate`.
+  - **Tối ưu tốc độ & tài nguyên:** Không tốn chi phí IO, không gọi API phụ, chỉ tốn ~50-80 token text nhẹ (~0ms độ trễ).
+
+### 10.2. Nâng cấp Translation Prompt trong Server (`server/translator.py`)
+- Định dạng danh sách câu thoại trang trước thành cấu trúc hội thoại dễ tiếp thu cho LLM:
+  ```text
+  - CÁC CÂU THOẠI TRANG TRƯỚC (RẤT QUAN TRỌNG ĐỂ KẾ THỪA MẠCH TRUYỆN & XƯNG HÔ):
+    + Gốc: "鈴木君 會長鬍子嗎？" -> Dịch: "Suzuki-kun cũng mọc râu á?"
+    + Gốc: "那當然是 會長的哦" -> Dịch: "Đương nhiên là có mọc rồi chứ."
+  ```
+- **Quy tắc 4 (Nhận diện chữ Phồn Thể):** Hướng dẫn LLM chú ý từ vựng phồn thể (`鬍/鬍子` = râu/để râu, `輪迴/循環` = vòng lặp thời gian, `戲劇` = kịch), cấm đoán mò chữ thành "rùa", "nhẹ nhàng" hay "nuôi".
+- **Quy tắc 5 (Chữ in áo / Thương hiệu):** Cấm tự bịa chữ tiếng Anh trên áo (như `NUMBER GIRL`) hoặc logo ngoài lề thành từ tượng thanh (SFX) hay tiếng động như "sột so".
+
+### 10.3. Kiểm thử & Xuất bản
+- Đã chạy kiểm thử `vitest`: 13/13 unit tests passed.
+- Đã build Extension mới vào `extension/.output/chrome-mv3`.
+- Đã xóa sạch cache bản dịch cũ trong database `comic_translate_vn.db`.
+
+
 
 
 

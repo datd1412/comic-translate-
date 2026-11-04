@@ -70,15 +70,28 @@ export function applyContextPreset(
  * Đóng gói payload `context` gửi kèm trong `context_json` của `POST /api/v1/page/translate`
  * (không phát sinh bất kỳ API call phụ nào).
  */
+export interface PreviousLineItem {
+  source_text: string;
+  translation: string;
+}
+
 export function buildTranslationContextPayload(
   seriesTitle: string,
-  customContext: string
-): { series_title: string; custom_context: string } {
+  customContext: string,
+  previousLines?: PreviousLineItem[]
+): {
+  series_title: string;
+  custom_context: string;
+  previous_lines?: PreviousLineItem[];
+} {
   return {
     series_title: (seriesTitle || "").trim(),
     custom_context: (customContext || "")
       .trim()
       .slice(0, MAX_CUSTOM_CONTEXT_LENGTH),
+    ...(previousLines && previousLines.length > 0
+      ? { previous_lines: previousLines.slice(-8) }
+      : {}),
   };
 }
 

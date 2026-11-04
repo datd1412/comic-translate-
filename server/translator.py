@@ -44,11 +44,24 @@ def build_comic_translation_prompt(
         if glossary
         else "Không có bảng thuật ngữ riêng"
     )
-    prev_str = (
-        json.dumps(previous_lines[-10:], ensure_ascii=False)
-        if previous_lines
-        else "Không có thoại trang trước"
-    )
+    if previous_lines:
+        prev_lines_formatted = []
+        for line in previous_lines[-8:]:
+            if isinstance(line, dict):
+                src = str(line.get("source_text") or line.get("text") or "").strip()
+                trans = str(line.get("translation") or "").strip()
+                if src and trans:
+                    prev_lines_formatted.append(f'  + Gốc: "{src}" -> Dịch: "{trans}"')
+                elif trans:
+                    prev_lines_formatted.append(f'  + Dịch: "{trans}"')
+                elif src:
+                    prev_lines_formatted.append(f'  + "{src}"')
+            elif isinstance(line, str) and line.strip():
+                prev_lines_formatted.append(f'  + {line.strip()}')
+        prev_str = "\n".join(prev_lines_formatted) if prev_lines_formatted else "Không có thoại trang trước"
+    else:
+        prev_str = "Không có thoại trang trước"
+
     custom_ctx_str = (
         f"- Bối cảnh truyện / Thể loại / Quy tắc xưng hô: {custom_context}\n"
         if custom_context
@@ -72,23 +85,31 @@ def build_comic_translation_prompt(
         f"- Tên bộ truyện: {series_title}\n"
         f"{custom_ctx_str}"
         f"- Bảng thuật ngữ / xưng hô (Glossary): {glossary_str}\n"
-        f"- Các câu thoại trang trước (để giữ mạch ngữ cảnh): {prev_str}\n\n"
+        f"- CÁC CÂU THOẠI TRANG TRƯỚC (RẤT QUAN TRỌNG ĐỂ KẾ THỪA MẠCH TRUYỆN & XƯNG HÔ):\n{prev_str}\n\n"
         f"THỨ TỰ ĐỌC TỰ NHIÊN:\n"
         f"Các khối chữ bên dưới đã được sắp xếp theo đúng thứ tự đọc: {direction_desc}.\n\n"
         "QUY TẮC DỊCH BẮT BUỘC:\n"
-        "1. KHÔI PHỤC TÊN RIÊNG PHƯƠNG TÂY (BACK-TRANSLITERATION):\n"
+        "1. KẾ THỪA NGỮ CẢNH TỪ TRANG TRƯỚC (NẾU CÓ):\n"
+        "   Sử dụng mạch truyện và đại từ nhân xưng (tôi/cậu, anh/em, ta/ngươi...) đã dùng ở trang trước để đảm bảo tính liên tục, không bị nhảy xưng hô vô lý.\n"
+        "2. KHÔI PHỤC TÊN RIÊNG PHƯƠNG TÂY (BACK-TRANSLITERATION):\n"
         "   Khi gặp tên nhân vật hoặc địa danh phương Tây được phiên âm sang chữ Hán (ví dụ: 阿梅莉亚 -> Amelia, 沃尔冈夫 -> Wolfgang, 莫扎特 -> Mozart, 玛利亚 -> Maria, 伦敦 -> London, 约翰 -> John), "
         "BẮT BUỘC khôi phục về tên gốc Latin chuẩn quốc tế. TUYỆT ĐỐI KHÔNG dịch theo âm Hán-Việt thô kệch (như A-mai-lợi-á, Oát-nhĩ-cương-phu).\n"
-        "2. LIÊN KẾT CÂU BỊ TÁCH BÓNG THOẠI (SENTENCE FRAGMENTATION):\n"
+        "3. LIÊN KẾT CÂU BỊ TÁCH BÓNG THOẠI (SENTENCE FRAGMENTATION):\n"
         "   Nhiều câu thoại dài bị chia cắt thành 2 hoặc nhiều bóng thoại liên tiếp. Hãy xem xét tổng thể để hiểu trọn vẹn mạch ý, "
         "sau đó phân bổ bản dịch tiếng Việt vào từng id tương ứng sao cho tự nhiên, câu từ mạch lạc, không ngắt cụt câu vô lý.\n"
-        "3. VĂN PHONG TRUYỆN TRANH TỰ NHIÊN & THOÁT Ý:\n"
+        "4. NHẬN DIỆN CHỮ PHỒN THỂ & NGỮ NGHĨA TRUYỆN TRANH:\n"
+        "   Văn bản có thể là chữ Hán Phồn Thể (như 鬍/鬍子 = râu/để râu, 輪迴/循環 = vòng lặp thời gian, 戲劇 = kịch...). "
+        "Hãy nhận diện đúng từ vựng theo ngữ cảnh câu chuyện. Tuyệt đối không dịch sai lệch thành 'rùa', 'nhẹ nhàng' hay 'nuôi con'.\n"
+        "5. XỬ LÝ CHỮ IN ÁO / NHÃN HIỆU / LOGO NGOÀI LỀ:\n"
+        "   Nếu gặp chữ tiếng Anh in trên áo/đồ vật (ví dụ tên nhãn hiệu 'NUMBER GIRL') hoặc logo mép tranh, hãy giữ nguyên hoặc dịch phù hợp, "
+        "TUYỆT ĐỐI KHÔNG tự bịa thành từ tượng thanh (SFX) hay tiếng động như 'sột so'.\n"
+        "6. VĂN PHONG TRUYỆN TRANH TỰ NHIÊN & THOÁT Ý:\n"
         "   Dùng khẩu ngữ tiếng Việt đời thường, biểu cảm sống động theo tâm lý nhân vật (vui, buồn, tức giận, mỉa mai). "
         "Tuân thủ bối cảnh thể loại nếu có cung cấp ở trên. Tránh dịch cứng nhắc từng từ kiểu Google Dịch.\n"
-        "4. TỰ ĐỘNG SỬA LỖI & DỌN RÁC OCR:\n"
+        "7. TỰ ĐỘNG SỬA LỖI & DỌN RÁC OCR:\n"
         "   Tự sửa các từ bị OCR nhận diện nhầm nét chữ Hán dựa vào ngữ cảnh. "
         "Loại bỏ dấu phẩy rác (，), dấu chấm hoặc ký tự lạ ở đầu hoặc cuối câu do dính đuôi bóng thoại.\n"
-        "5. GIỮ NGUYÊN ID VÀ CẤU TRÚC JSON:\n"
+        "8. GIỮ NGUYÊN ID VÀ CẤU TRÚC JSON:\n"
         "   Dịch đầy đủ mọi phần tử trong danh sách, giữ đúng `id`. CHỈ TRẢ VỀ DUY NHẤT MỘT JSON OBJECT theo mẫu:\n"
         '{"translations": [{"id": 0, "translation": "câu dịch 1"}, {"id": 1, "translation": "câu dịch 2"}]}\n'
         "Tuyệt đối không giải thích hay thêm ký hiệu markdown nào bên ngoài JSON.\n\n"
