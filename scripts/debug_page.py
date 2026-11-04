@@ -39,7 +39,7 @@ if str(SERVER_DIR) not in sys.path:
 
 try:
     from config import settings
-    from ocr_postprocess import normalize_text, split_blocks
+    from ocr_postprocess import merge_adjacent_vertical_dialogue, normalize_text, split_blocks
     from reading_order import extract_bbox, sort_blocks_by_reading_order
     from translate_routes import call_ocr_service
 except ImportError as err:
@@ -206,7 +206,10 @@ def main() -> None:
     # 3. Phân tách split_blocks: dialogue, edge_strips, ignored
     dialogue, edge_strips, ignored = split_blocks(blocks, img_w=img_w, img_h=img_h)
 
-    # 4. Sắp xếp thứ tự đọc cho dialogue
+    # 4. Gom các cột thoại dọc liền kề trong cùng bóng thoại
+    dialogue = merge_adjacent_vertical_dialogue(dialogue, reading_direction=args.direction)
+
+    # 5. Sắp xếp thứ tự đọc cho dialogue
     sorted_dialogue = sort_blocks_by_reading_order(dialogue, reading_direction=args.direction)
 
     # Sắp xếp edge_strips từ trên xuống dưới
