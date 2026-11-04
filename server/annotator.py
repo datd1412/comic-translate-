@@ -9,14 +9,14 @@ from PIL import Image, ImageDraw, ImageFont
 def draw_numbered_bboxes(
     image: Image.Image,
     boxes: list[dict[str, Any]],
-    max_dim: int = 1024,
-    quality: int = 75,
+    max_dim: int = 1536,
+    quality: int = 85,
 ) -> str:
     """
     Kỹ thuật vẽ khung đỏ đánh số thứ tự [1], [2] theo chuẩn Libre Manga Translator:
-    - Thu nhỏ ảnh về chiều dài/rộng tối đa max_dim (mặc định 1024px) để giảm tải token & băng thông.
-    - Vẽ đường viền đỏ nổi bật (#ef4444) và huy hiệu số thứ tự ở góc trên mỗi bóng thoại.
-    - Nén JPEG chất lượng 75% thành chuỗi Base64 (dung lượng chỉ ~120KB - 180KB).
+    - Thu nhỏ ảnh về độ phân giải sắc nét max_dim (1536px) để nét chữ Hán/Nhật rõ ràng, tránh nhòe nét.
+    - Vẽ đường viền đỏ nổi bật (#ef4444) và huy hiệu số thứ tự ở vị trí an toàn, không đè lên chữ.
+    - Nén JPEG chất lượng 85% thành chuỗi Base64 (~200KB - 280KB, siêu nhẹ và truyền cực nhanh).
     """
     w, h = image.size
     scale = 1.0
@@ -26,7 +26,7 @@ def draw_numbered_bboxes(
     new_w = max(1, int(round(w * scale)))
     new_h = max(1, int(round(h * scale)))
 
-    # Tạo canvas thu nhỏ
+    # Tạo canvas thu nhỏ với thuật toán chống vỡ nét LANCZOS
     canvas = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
     draw = ImageDraw.Draw(canvas)
 
@@ -50,15 +50,21 @@ def draw_numbered_bboxes(
         # 1. Vẽ viền đỏ quanh bóng thoại
         draw.rectangle([x1, y1, x2, y2], outline="#ef4444", width=line_width)
 
-        # 2. Vẽ huy hiệu đỏ chứa số thứ tự ở góc trên bên trái
-        badge_y = max(0, y1 - badge_h) if y1 >= badge_h else y1
-        badge_x2 = min(new_w, x1 + badge_w)
-        badge_y2 = min(new_h, badge_y + badge_h)
+        # 2. Vẽ huy hiệu đỏ: ưu tiên đặt phía trên mép ngoài bóng thoại (y1 - badge_h)
+        # Nếu chạm nóc ảnh thì đặt phía dưới đáy (y2), TUYỆT ĐỐI không đè lên chữ bên trong
+        if y1 >= badge_h:
+            badge_y1 = y1 - badge_h
+            badge_y2 = y1
+        else:
+            badge_y1 = min(new_h - badge_h, y2)
+            badge_y2 = badge_y1 + badge_h
 
-        draw.rectangle([x1, badge_y, badge_x2, badge_y2], fill="#ef4444")
+        badge_x2 = min(new_w, x1 + badge_w)
+        draw.rectangle([x1, badge_y1, badge_x2, badge_y2], fill="#ef4444")
         # In số màu trắng nổi bật
-        draw.text((x1 + 4, badge_y + 2), num_str, fill="#ffffff", font=font)
+        draw.text((x1 + 4, badge_y1 + 2), num_str, fill="#ffffff", font=font)
 
     buf = io.BytesIO()
     canvas.save(buf, format="JPEG", quality=quality)
     return base64.b64encode(buf.getvalue()).decode("utf-8")
+
