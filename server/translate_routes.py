@@ -22,7 +22,7 @@ from database import (
     refund_credits_atomic,
     utcnow,
 )
-from ocr_postprocess import merge_adjacent_vertical_dialogue, normalize_text, split_blocks
+from ocr_postprocess import normalize_text, split_blocks
 from reading_order import extract_bbox, sort_blocks_by_reading_order
 from translator import LLMTranslationError, translate_blocks_with_llm
 
@@ -311,12 +311,7 @@ async def translate_comic_page(
                 ocr_blocks, img_w=img_width, img_h=img_height
             )
 
-            # 3. Gom các cột thoại dọc liền kề trong cùng bong bóng thoại
-            dialogue = merge_adjacent_vertical_dialogue(
-                dialogue, reading_direction=effective_direction
-            )
-
-            # 4. Chỉ sort_blocks_by_reading_order phần dialogue
+            # 3. Chỉ sort_blocks_by_reading_order phần dialogue
             sorted_dialogue = sort_blocks_by_reading_order(
                 dialogue, reading_direction=effective_direction
             )
