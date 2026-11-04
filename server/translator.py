@@ -312,3 +312,220 @@ async def translate_blocks_with_llm(
     finally:
         if owns_client:
             await client.aclose()
+
+
+async def translate_page_multimodal_gemini(
+    image: Any,
+    detected_boxes: list[dict[str, Any]],
+    lang_pair: str = "zh-vi",
+    context: dict[str, Any] | None = None,
+    reading_direction: str = "rtl",
+    http_client: httpx.AsyncClient | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Dịch trang truyện tranh theo cơ chế Multimodal Vision với ô đỏ đánh số (chuẩn Libre Manga):
+    1. Đóng dấu số thứ tự [1], [2], ... lên từng bóng thoại và nén JPEG 75% (~150KB).
+    2. Gửi ảnh trực tiếp tới Gemini Vision để AI đồng thời đọc chữ và chuyển ngữ trong 1 lần gọi duy nhất.
+    3. Tự vá lỗi (Self-Healing) đảm bảo số lượng kết quả khớp 100% với danh sách bóng thoại đầu vào.
+    """
+    from annotator import draw_numbered_bboxes
+
+    if not detected_boxes:
+        return []
+
+    count = len(detected_boxes)
+    annotated_b64 = draw_numbered_bboxes(image, detected_boxes, max_dim=1024, quality=75)
+
+    ctx = context or {}
+    series_title = str(ctx.get("series_title") or "Không rõ").strip()
+    glossary = ctx.get("glossary") or {}
+    previous_lines = ctx.get("previous_lines") or []
+    custom_context = str(ctx.get("custom_context") or "").strip()
+
+    source_lang_name = (
+        "tiếng Trung (Manhua)"
+        if lang_pair.lower().startswith("zh")
+        else "tiếng Anh / tiếng Nhật"
+    )
+
+    glossary_str = (
+        json.dumps(glossary, ensure_ascii=False)
+        if glossary
+        else "Không có bảng thuật ngữ riêng"
+    )
+
+    prev_lines_formatted: list[str] = []
+    if previous_lines:
+        for line in previous_lines[-8:]:
+            if isinstance(line, dict):
+                t_val = str(line.get("text") or line.get("translation") or "").strip()
+                if t_val:
+                    prev_lines_formatted.append(f"  + {t_val}")
+            elif isinstance(line, str) and line.strip():
+                prev_lines_formatted.append(f"  + {line.strip()}")
+    prev_str = "\n".join(prev_lines_formatted) if prev_lines_formatted else "Không có thoại trang trước"
+
+    custom_ctx_str = (
+        f"- Bối cảnh truyện / Thể loại / Quy tắc xưng hô: {custom_context}\n"
+        if custom_context
+        else ""
+    )
+
+    dir_desc = "từ Phải sang Trái (RTL)" if reading_direction.lower() == "rtl" else "từ Trái sang Phải (LTR)"
+
+    system_prompt = (
+        f"Bạn là dịch giả truyện tranh Việt Nam xuất sắc, chuyển ngữ từ {source_lang_name} sang tiếng Việt sống động, mượt mà và tự nhiên.\n"
+        f"- Tên bộ truyện: {series_title}\n"
+        f"{custom_ctx_str}"
+        f"- Bảng thuật ngữ / xưng hô: {glossary_str}\n"
+        f"- CÁC CÂU THOẠI TRANG TRƯỚC (KẾ THỪA MẠCH TRUYỆN & XƯNG HÔ):\n{prev_str}\n\n"
+        f"THỨ TỰ ĐỌC: Các ô thoại đã được đánh số đỏ [1], [2], ... theo thứ tự đọc {dir_desc}.\n\n"
+        "QUY TẮC BẮT BUỘC:\n"
+        "1. Dịch chuẩn xác nội dung trong các ô đỏ có số thứ tự [1], [2], ... sang tiếng Việt tự nhiên, phù hợp bối cảnh nhân vật.\n"
+        "2. Khôi phục tên riêng phương Tây (Amelia, Wolfgang, Mozart,...) thay vì âm Hán-Việt thô kệch.\n"
+        "3. TUYỆT ĐỐI BỎ QUA bất kỳ chữ nào nằm ngoài ô đỏ (chữ in trên áo thun, logo mép tranh, watermark).\n"
+        f"4. Mảng 'translations' BẮT BUỘC có ĐÚNG {count} phần tử, đúng thứ tự từ Box 1 đến Box {count}.\n"
+        f"5. Mảng 'sourceTexts' BẮT BUỘC có ĐÚNG {count} phần tử, chứa chữ gốc bạn nhìn thấy trong từng ô đỏ.\n\n"
+        "CHỈ TRẢ VỀ DUY NHẤT MỘT JSON OBJECT theo mẫu:\n"
+        "{\n"
+        '  "translations": ["câu dịch cho box 1", "câu dịch cho box 2"],\n'
+        '  "sourceTexts": ["chữ gốc box 1", "chữ gốc box 2"]\n'
+        "}\n"
+        "Tuyệt đối không giải thích hay thêm ký hiệu markdown nào bên ngoài JSON."
+    )
+
+    user_prompt = f"Vui lòng xử lý và dịch {count} bóng thoại được đánh số đỏ [1] đến [{count}] trong trang truyện."
+
+    raw_model = (settings.GEMINI_MODEL or "gemini-3.1-flash-lite").strip()
+    model_name = raw_model[len("models/"):] if raw_model.startswith("models/") else raw_model
+
+    gemini_url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{model_name}:generateContent?key={settings.GEMINI_API_KEY}"
+    )
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": settings.GEMINI_API_KEY or "missing-gemini-key",
+    }
+    llm_temp = float(getattr(settings, "LLM_TEMPERATURE", 0.3))
+    payload = {
+        "systemInstruction": {"parts": [{"text": system_prompt}]},
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {"text": user_prompt},
+                    {
+                        "inlineData": {
+                            "mimeType": "image/jpeg",
+                            "data": annotated_b64,
+                        }
+                    },
+                ],
+            }
+        ],
+        "generationConfig": {
+            "temperature": llm_temp,
+            "maxOutputTokens": 2048,
+            "responseMimeType": "application/json",
+        },
+    }
+
+    owns_client = http_client is None
+    client = http_client or httpx.AsyncClient(timeout=settings.LLM_TIMEOUT_SECONDS)
+    try:
+        resp = await client.post(gemini_url, json=payload, headers=headers)
+        if resp.status_code == 404:
+            # Fallback nếu model bị 404
+            for fallback_model in ["gemini-3.1-flash-lite", "gemini-3-flash-preview", "gemini-flash-lite-latest", "gemini-3.8-flash"]:
+                if fallback_model == model_name:
+                    continue
+                fallback_url = (
+                    f"https://generativelanguage.googleapis.com/v1beta/models/"
+                    f"{fallback_model}:generateContent?key={settings.GEMINI_API_KEY}"
+                )
+                fallback_resp = await client.post(fallback_url, json=payload, headers=headers)
+                if fallback_resp.status_code == 200:
+                    resp = fallback_resp
+                    break
+
+        if resp.status_code != 200:
+            raise LLMTranslationError(f"Gemini Vision trả mã lỗi HTTP {resp.status_code}")
+
+        data = resp.json()
+        candidates = data.get("candidates") or []
+        if not candidates:
+            raise LLMTranslationError("Gemini Vision không trả về candidates nào.")
+
+        parts = candidates[0].get("content", {}).get("parts") or []
+        raw_text = "".join(str(p.get("text") or "") for p in parts).strip()
+
+        # Parse JSON
+        parsed_obj: dict[str, Any] = {}
+        try:
+            parsed_obj = json.loads(raw_text)
+        except Exception:
+            fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw_text, flags=re.IGNORECASE)
+            if fence_match:
+                try:
+                    parsed_obj = json.loads(fence_match.group(1).strip())
+                except Exception:
+                    pass
+            if not parsed_obj:
+                obj_match = re.search(r"\{[\s\S]*\}", raw_text)
+                if obj_match:
+                    try:
+                        parsed_obj = json.loads(obj_match.group(0))
+                    except Exception:
+                        pass
+
+        raw_translations = parsed_obj.get("translations") if isinstance(parsed_obj, dict) else []
+        raw_sources = parsed_obj.get("sourceTexts") if isinstance(parsed_obj, dict) else []
+
+        # Chuẩn hóa danh sách chuỗi
+        translations: list[str] = []
+        if isinstance(raw_translations, list):
+            for item in raw_translations:
+                if isinstance(item, dict):
+                    translations.append(str(item.get("translation") or item.get("text") or "").strip())
+                else:
+                    translations.append(str(item or "").strip())
+
+        source_texts: list[str] = []
+        if isinstance(raw_sources, list):
+            for item in raw_sources:
+                if isinstance(item, dict):
+                    source_texts.append(str(item.get("source") or item.get("text") or "").strip())
+                else:
+                    source_texts.append(str(item or "").strip())
+
+        # Self-Healing: Cân bằng số lượng mảng
+        while len(translations) < count:
+            translations.append("")
+        if len(translations) > count:
+            translations = translations[:count]
+
+        while len(source_texts) < count:
+            source_texts.append("")
+        if len(source_texts) > count:
+            source_texts = source_texts[:count]
+
+        # Ghép thành cấu trúc blocks chuẩn
+        merged_blocks: list[dict[str, Any]] = []
+        for idx, box in enumerate(detected_boxes):
+            block_id = int(box.get("id", idx))
+            bbox = list(box.get("bbox") or [0, 0, 0, 0])
+            s_text = source_texts[idx]
+            t_text = translations[idx] or s_text
+
+            merged_blocks.append({
+                "id": block_id,
+                "bbox": bbox,
+                "source_text": s_text,
+                "translation": t_text,
+            })
+
+        return merged_blocks
+    finally:
+        if owns_client:
+            await client.aclose()

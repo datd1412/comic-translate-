@@ -290,55 +290,89 @@ async def translate_comic_page(
     one_time_deducted = deduct_info["one_time_deducted"]
 
     http_client: httpx.AsyncClient | None = getattr(request.app.state, "http_client", None)
-# 6. Gọi OCR Service và LLM; nếu thất bại thì hoàn trả nguyên tử số credit vừa trừ
+    # 6. Gọi OCR / Bubble Detector và LLM; nếu thất bại thì hoàn trả nguyên tử số credit vừa trừ
     try:
-        ocr_result = await call_ocr_service(
-            image_bytes=raw_bytes,
-            filename=image.filename or "page.png",
-            content_type=image.content_type or "image/png",
-            source_lang=source_lang,
-            http_client=http_client,
-        )
-        ocr_blocks = ocr_result.get("blocks") or []
+        translated_blocks: list[dict[str, Any]] = []
+        used_multimodal = False
 
-        if ocr_blocks:
-            # 1. Gọi normalize_text
-            for block in ocr_blocks:
-                normalize_text(block)
+        # Ưu tiên: Pipeline Multimodal Vision (Libre Manga Translator) siêu nhẹ, bỏ qua OCR
+        if getattr(settings, "ENABLE_BUBBLE_DETECTOR", True) and settings.LLM_PROVIDER == "gemini" and settings.GEMINI_API_KEY:
+            try:
+                from bubble_detector import get_bubble_detector
+                from translator import translate_page_multimodal_gemini
 
-            # 2. Gọi split_blocks
-            dialogue, edge_strips, ignored = split_blocks(
-                ocr_blocks, img_w=img_width, img_h=img_height
+                detector = get_bubble_detector()
+                with Image.open(io.BytesIO(raw_bytes)) as pil_page:
+                    detected_bubbles = detector.detect(
+                        pil_page.convert("RGB"),
+                        min_confidence=0.35,
+                        reading_direction=effective_direction,
+                    )
+                    if detected_bubbles:
+                        translated_blocks = await translate_page_multimodal_gemini(
+                            image=pil_page,
+                            detected_boxes=detected_bubbles,
+                            lang_pair=normalized_pair,
+                            context=context_dict,
+                            reading_direction=effective_direction,
+                            http_client=http_client,
+                        )
+                        used_multimodal = True
+            except Exception as detector_err:
+                import traceback
+                print(f"[WARN] Multimodal Vision pipeline error, falling back to OCR: {detector_err}")
+                traceback.print_exc()
+                used_multimodal = False
+
+        # Fallback về OCR truyền thống (PaddleOCR) nếu không chạy multimodal hoặc trang không có bóng thoại
+        if not used_multimodal:
+            ocr_result = await call_ocr_service(
+                image_bytes=raw_bytes,
+                filename=image.filename or "page.png",
+                content_type=image.content_type or "image/png",
+                source_lang=source_lang,
+                http_client=http_client,
             )
+            ocr_blocks = ocr_result.get("blocks") or []
 
-            # 3. Chỉ sort_blocks_by_reading_order phần dialogue
-            sorted_dialogue = sort_blocks_by_reading_order(
-                dialogue, reading_direction=effective_direction
-            )
+            if ocr_blocks:
+                # 1. Gọi normalize_text
+                for block in ocr_blocks:
+                    normalize_text(block)
 
-            # Giữ nguyên thứ tự từ trên xuống của edge_strips
-            sorted_edge_strips = sorted(edge_strips, key=lambda b: extract_bbox(b)[1])
-
-            # 4. Danh sách đưa vào LLM = edge_strips (đặt trước) + dialogue đã sort
-            final_blocks = sorted_edge_strips + sorted_dialogue
-
-            # 5. Gán lại id = 0..n-1 theo thứ tự cuối cùng
-            for new_id, block in enumerate(final_blocks):
-                block["id"] = new_id
-
-            # 6. Dịch bằng LLM (khối ignored không dịch và không trả về client)
-            if final_blocks:
-                translated_blocks = await translate_blocks_with_llm(
-                    blocks=final_blocks,
-                    lang_pair=normalized_pair,
-                    context=context_dict,
-                    reading_direction=effective_direction,
-                    http_client=http_client,
+                # 2. Gọi split_blocks
+                dialogue, edge_strips, ignored = split_blocks(
+                    ocr_blocks, img_w=img_width, img_h=img_height
                 )
+
+                # 3. Chỉ sort_blocks_by_reading_order phần dialogue
+                sorted_dialogue = sort_blocks_by_reading_order(
+                    dialogue, reading_direction=effective_direction
+                )
+
+                # Giữ nguyên thứ tự từ trên xuống của edge_strips
+                sorted_edge_strips = sorted(edge_strips, key=lambda b: extract_bbox(b)[1])
+
+                # 4. Danh sách đưa vào LLM = edge_strips (đặt trước) + dialogue đã sort
+                final_blocks = sorted_edge_strips + sorted_dialogue
+
+                # 5. Gán lại id = 0..n-1 theo thứ tự cuối cùng
+                for new_id, block in enumerate(final_blocks):
+                    block["id"] = new_id
+
+                # 6. Dịch bằng LLM (khối ignored không dịch và không trả về client)
+                if final_blocks:
+                    translated_blocks = await translate_blocks_with_llm(
+                        blocks=final_blocks,
+                        lang_pair=normalized_pair,
+                        context=context_dict,
+                        reading_direction=effective_direction,
+                        http_client=http_client,
+                    )
+                else:
+                    translated_blocks = []
             else:
                 translated_blocks = []
-        else:
-            translated_blocks = []
 
     except httpx.TimeoutException as exc:
         print(f"\n[ERROR TIMEOUT]: {exc}")

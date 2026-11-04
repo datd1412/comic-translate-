@@ -83,4 +83,6 @@ desktop.ini
 # Local fixtures and cache
 fixtures/
 .paddlex_cache/
+server/models/
+*.onnx
 
