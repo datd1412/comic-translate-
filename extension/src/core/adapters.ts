@@ -265,6 +265,21 @@ export function extractBestImageUrl(img: HTMLImageElement): string {
     }
   }
 
+  // Nếu là ảnh trong Web Component <amp-img>, kiểm tra thuộc tính src/data-src trên thẻ cha
+  const ampParent = img.closest("amp-img");
+  if (ampParent) {
+    for (const attr of lazyAttrs) {
+      const val = ampParent.getAttribute(attr)?.trim();
+      if (val && !val.startsWith("data:image/svg") && !val.startsWith("data:image/gif")) {
+        return resolveRelativeUrl(val, img.baseURI);
+      }
+    }
+    const ampSrc = (ampParent.getAttribute("src") || "").trim();
+    if (ampSrc && !ampSrc.startsWith("data:image/gif") && !ampSrc.startsWith("data:image/svg")) {
+      return resolveRelativeUrl(ampSrc, img.baseURI);
+    }
+  }
+
   const direct = (img.currentSrc || img.getAttribute("src") || img.src || "").trim();
   if (direct && !direct.startsWith("data:image/gif")) {
     return resolveRelativeUrl(direct, img.baseURI);
