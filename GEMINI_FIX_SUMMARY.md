@@ -739,6 +739,147 @@ Qua kiểm tra trực tiếp nhật ký cơ sở dữ liệu (`translation_cache
 - **Extension unit tests:** 13/13 vitest tests passed (`vitest run`).
 - **Extension build:** `wxt build` thành công vào `extension/.output/chrome-mv3`.
 
+---
+
+## 7. Tối ưu kích thước bóng thoại, giới hạn Font Size và thuật toán chống tràn che tranh (Extension)
+
+### 7.1. Phân tích nguyên nhân
+1. **Lệch cỡ chữ mất cân đối (Font Size Imbalance):**
+   - Sau khi hỗ trợ mở rộng Vertical Bubble, các câu thoại ngắn (1-2 từ) bị thuật toán phóng to font-size lên tới `24px - 26px`, trong khi câu thoại dài chỉ đạt `9px - 10px`. Sự chênh lệch này khiến các trang truyện có nhiều thoại ngắn trông thô kệch và mất cân đối thẩm mỹ.
+2. **Bong bóng mở rộng quá rộng che mất nhân vật:**
+   - Chiều rộng bóng thoại tối đa cho phép lên tới `135px - 180px`, dẫn đến việc các khung thoại dọc che lấp nét vẽ nhân vật và lấn ra ngoài đường biên phân khung tranh (panel gutter).
+3. **Bước lùi font và khoảng cách dòng:**
+   - Bước lùi `1px` khi auto-fit quá thô, line-height `1.25` và đệm `4px 6px` chiếm nhiều diện tích không cần thiết của bóng thoại.
+
+### 7.2. Chi tiết từng file đã sửa đổi
+
+#### A. `extension/src/core/geometry.ts`
+- **Mục tiêu:** Cố định trần mở rộng chiều rộng bóng thoại tối đa ở mức `115px` và đảm bảo phân vùng va chạm hướng tâm không bao giờ lấn ra ngoài viền khung tranh.
+- **Thay đổi:**
+  ```typescript
+  // Cố định trần mở rộng chiều rộng tối đa ở mức 115px (tránh biến bóng thoại thành biển quảng cáo)
+  const MAX_BUBBLE_EXPAND_WIDTH = 115;
+
+  if (box.width < targetMinWidth) {
+    const expandRatio = Math.min(
+      maxExpand,
+      Math.max(minExpand, 1.4 + (aspectRatio - 1.4) * 0.25)
+    );
+    newWidth = Math.min(MAX_BUBBLE_EXPAND_WIDTH, Math.max(box.width * expandRatio, targetMinWidth));
+  } else {
+    newWidth = Math.min(box.width + 12, Math.min(box.width * 1.10, MAX_BUBBLE_EXPAND_WIDTH));
+  }
+  ```
+
+#### B. `extension/src/core/typography.ts`
+- **Mục tiêu:** Tinh chỉnh tỷ lệ ước lượng font-size theo diện tích, thu gọn line-height xuống `1.22`, padding thu gọn `3px 4px` để tăng không gian hiển thị cho chữ tiếng Việt.
+- **Thay đổi:**
+  ```typescript
+  // Thu gọn line-height và đệm khung hiển thị
+  lineHeight = Math.round(fontSizePx * 1.22);
+  padding = "3px 4px";
+  ```
+
+#### C. `extension/entrypoints/content.ts`
+- **Mục tiêu:** Khống chế mức trần font-size tối đa cho câu thoại ở mức `13.5px`, tạo dải font đồng đều `9.5px - 13.5px` trên toàn trang tranh.
+- **Thay đổi:**
+  ```typescript
+  // Giới hạn font-size trần tối đa 13.5px (ngăn chặn câu ngắn bị chữ 26px khổng lồ)
+  const minFont = 9.0;
+  const maxFont = Math.min(13.5, Math.max(10.5, Math.floor(scaled.height * 0.45)));
+  let currentFont = estimateFontSizeFromArea(cleanText, scaled.width, scaled.height, {
+    minFontSize: minFont,
+    maxFontSize: maxFont,
+    paddingPx: 3,
+  });
+
+  // Vòng lặp hạ font từng bước 0.5px siêu mịn cho tới khi vừa khít khung
+  if (boxEl.offsetHeight > 0 && boxEl.offsetWidth > 0) {
+    while (
+      currentFont > minFont &&
+      (boxEl.scrollHeight > boxEl.offsetHeight || boxEl.scrollWidth > boxEl.offsetWidth)
+    ) {
+      currentFont -= 0.5;
+      boxEl.style.fontSize = `${currentFont}px`;
+    }
+  }
+  ```
+
+### 7.3. Kết quả
+- Toàn bộ cỡ chữ trên trang truyện nằm trong dải `9.5px - 13.5px` hài hòa, tự nhiên.
+- Bong bóng không còn che lấp nét vẽ khuôn mặt/cơ thể nhân vật hoặc tràn ra ngoài viền tranh.
+
+---
+
+## 8. Khắc phục triệt để lỗi tách rời thoại dọc cùng ô và sự cố gom tràn chéo qua 2 khung tranh (OCR & Server)
+
+### 8.1. Phân tích nguyên nhân gốc rễ
+1. **Lỗi thoại 2 cột trong cùng một bóng bị xé lẻ thành 2 ô riêng (Split Dialogue):**
+   - Trong truyện tranh Manga/Manhua viết dọc, một câu thoại dài thường được ngắt thành nhiều cột kế nhau: Cột 1 có 18 chữ (cao ~340px), Cột 2 có 4 chữ (cao ~70px).
+   - Trong `ocr_service/pipeline.py`, hàm `_are_lines_in_same_bubble`:
+     + Điều kiện chặn mép `if (a.height >= 280 and a.width <= 75)` chặn nhầm các cột thoại dài nội dung bên trong tranh.
+     + Điều kiện kiểm tra tỷ lệ chiều cao `if max_h / min_h > 3.2: return False` so sánh chiều cao 2 cột ($340 / 70 = 4.86 > 3.2$), khiến 2 cột bị từ chối gom và phát sinh thành 2 block riêng biệt.
+     + Hậu quả: Server gửi 2 khối tách rời sang LLM (`id: 0` và `id: 1`), LLM dịch từng mảnh câu cụt lủn và làm lệch nghĩa toàn bộ câu nói.
+2. **Lỗi gom tràn chéo qua 2 khung tranh (Cross-panel Merger):**
+   - Khi áp dụng hàm gom khối hình học `merge_adjacent_vertical_dialogue` ở tầng Server: Đối tượng trên Server đã là một Block thoại hoàn chỉnh ($w \approx 120-180\text{px}$). Lấy độ rộng khối làm thước đo khiến dung sai quét lên tới $300\text{px}-375\text{px}$, dẫn đến việc gom nhầm hộp thoại ở khung giữa với hộp thoại ở khung dưới (vượt qua rãnh khung tranh) và gom nhầm 2 người nói khác nhau ở hàng trên thành một khối dị hình khổng lồ.
+3. **Lỗi đảo lộn thứ tự cột bên trong khối OCR:**
+   - Trong `ocr_service/pipeline.py`, hàm `comp.sort` chia `ln.width * 0.5` cho từng dòng riêng rẽ. Do nét chữ mỗi cột có bề rộng hơi lệch nhau nên giá trị bucket bị nhảy cóc, làm đảo thứ tự đọc (cột 3 nhảy trước cột 2).
+
+### 8.2. Chi tiết các tệp đã sửa đổi
+
+#### A. `ocr_service/pipeline.py` (Commit `018c38f`, `bbfdc7d`)
+- **1. Viết lại hàm `_are_lines_in_same_bubble` cho cột dọc:**
+  ```python
+  if a_vert and b_vert:
+      # Hai cột chữ dọc: chiều rộng cột đại diện cho cỡ chữ (font size)
+      col_w = max(a.width, b.width, 1.0)
+      min_w = max(1.0, min(a.width, b.width))
+      if col_w / min_w > 2.8:
+          return False
+
+      # Khoảng cách ngang giữa hai cột trong cùng bong bóng (rất sát nhau, <= 50px)
+      if gap_x > col_w * 1.5 or gap_x > 50.0:
+          return False
+
+      # Hai cột cạnh nhau trong cùng bong bóng bắt buộc phải có vùng phủ theo trục dọc Y
+      # và không có khoảng cách dọc (không thể cột nọ nằm hẳn phía trên cột kia qua khung tranh)
+      min_h = max(1.0, min(a.height, b.height))
+      if gap_y > 10.0 or (overlap_y / min_h < 0.20):
+          return False
+
+      return True
+  ```
+  *Gỡ bỏ kiểm tra `max_h / min_h > 3.2` và chặn dòng cao `height >= 280`. Ràng buộc `gap_y <= 10px` và `overlap_y / min_h >= 0.20` đảm bảo không bao giờ gom nhầm qua rãnh khung tranh.*
+
+- **2. Sửa thuật toán sắp xếp thứ tự cột trong khối (`comp.sort`):**
+  ```python
+  if vertical_block:
+      # Chữ dọc (ja hoặc zh cột dọc): sắp các cột từ PHẢI sang TRÁI, nếu cùng cột thì từ trên xuống.
+      # Dùng avg_col_w đồng nhất cho toàn khối để tránh sai lệch bucket giữa các cột.
+      avg_col_w = max(1.0, statistics.mean(ln.width for ln in comp))
+      comp.sort(key=lambda ln: (-round(ln.center_x / (avg_col_w * 0.7)), ln.bbox[1]))
+  else:
+      # Chữ ngang (en, ko, zh ngang): sắp từ TRÊN xuống DƯỚI, trái sang phải
+      avg_line_h = max(1.0, statistics.mean(ln.height for ln in comp))
+      comp.sort(key=lambda ln: (round(ln.center_y / (avg_line_h * 0.7)), ln.bbox[0]))
+  ```
+
+#### B. `server/translate_routes.py` & `server/ocr_postprocess.py` (Commit `47ea86d`, `540064d`)
+- Loại bỏ hoàn toàn việc gọi `merge_adjacent_vertical_dialogue` ở tầng Server. Tầng Server chỉ nhận các khối hoàn chỉnh từ OCR, chuẩn hóa text và phân loại. Không can thiệp gom khối mù.
+
+#### C. `scripts/debug_page.py` (Commit `9893f84`)
+- Đồng bộ hóa quy trình chẩn đoán debug khớp 100% với luồng xử lý thực tế của Server.
+
+#### D. Xóa bộ nhớ đệm cũ (Cache Invalidation)
+- Xóa sạch 94 bản ghi lưu trữ khối gom lỗi cũ trong các bảng `translation_cache` và `translation_idempotency` của database (`server/comic_translate_vn.db`), đảm bảo các lần dịch tiếp theo nhận bản dịch mới 100%.
+
+### 8.3. Kết quả kiểm thử & xác minh thực tế
+- **Trang Pilot:** Cột 18 chữ + cột 4 chữ gộp chuẩn xác thành 1 khối: `我想要的是由女性飞行员首次完成跨大西洋飞行这项伟业`.
+- **Trang Mozart:** Hộp thoại khung giữa (`无论是贵族还是富豪……全都着迷于我们的演奏`) và khung dưới (`我和我的弟弟沃尔冈夫曾经就是`) tách biệt hoàn toàn 100%, thứ tự chữ chuẩn xác từng từ.
+- **Unit test Extension:** Đạt 13/13 passed (`npm run test:unit`).
+- **Extension Build:** Đã xuất bản build sạch vào `extension/.output/chrome-mv3`.
+
+
 
 
 
