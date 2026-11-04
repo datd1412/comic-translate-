@@ -79,3 +79,8 @@ Thumbs.db
 desktop.ini
 *.crdownload
 *.part
+
+# Local fixtures and cache
+fixtures/
+.paddlex_cache/
+
