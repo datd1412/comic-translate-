@@ -879,6 +879,38 @@ Qua kiểm tra trực tiếp nhật ký cơ sở dữ liệu (`translation_cache
 - **Unit test Extension:** Đạt 13/13 passed (`npm run test:unit`).
 - **Extension Build:** Đã xuất bản build sạch vào `extension/.output/chrome-mv3`.
 
+---
+
+## 9. Cải tiến chất lượng dịch thuật (Prompt Localization, Back-Transliteration, Temperature 0.5, Context Presets)
+
+**Ngày thực hiện:** 04/11/2026  
+**Mục tiêu:** Nâng cao chất lượng câu dịch, chuyển ngữ tự nhiên đúng khẩu ngữ truyện tranh Việt Nam, chấm dứt tình trạng dịch bồi Hán-Việt ngô nghê và câu cụt lủn do bóng thoại bị ngắt quãng, không phát sinh chi phí hay độ trễ.
+
+### 9.1. Nâng cấp tham số Temperature trong Server (`server/config.py` & `server/translator.py`)
+- **Vấn đề:** Trước đây tham số `temperature` bị cố định ở mức `0.2` (mức an toàn nhưng máy móc, dịch sát từng chữ như Google Dịch, thiếu tự nhiên).
+- **Giải pháp:**
+  - Bổ sung cấu hình `LLM_TEMPERATURE: float = 0.5` vào `server/config.py`.
+  - Cập nhật cả 2 provider (Gemini và DeepSeek) trong `server/translator.py` dùng `temperature: 0.5`.
+  - Giúp bản dịch tiếng Việt thoát ý, mềm mại, biểu cảm tự nhiên theo nhịp điệu nhân vật mà vẫn đảm bảo 100% định dạng JSON nhờ ràng buộc `responseMimeType: "application/json"`.
+
+### 9.2. Nâng cấp Translation Prompt (`server/translator.py`)
+Bổ sung 4 quy tắc bắt buộc chuyên sâu cho truyện tranh:
+1. **Hoàn nguyên tên riêng phương Tây (Back-transliteration):**
+   - Ép buộc khôi phục tên Latin chuẩn quốc tế khi gặp tên người/địa danh Tây phương bị phiên âm chữ Hán (như `阿梅莉亚` ➔ `Amelia`, `沃尔冈夫` ➔ `Wolfgang`, `莫扎特` ➔ `Mozart`, `伦敦` ➔ `London`...). Tuyệt đối cấm dịch bồi âm Hán-Việt dị hợm.
+2. **Khắc phục câu bị ngắt vụn qua nhiều bóng thoại (Sentence Fragmentation):**
+   - Hướng dẫn LLM liên kết ngữ nghĩa giữa các bóng thoại liền kề để dịch trọn vẹn mạch ý, sau đó phân bổ bản dịch tiếng Việt vào từng id tương ứng sao cho tự nhiên, mạch lạc.
+3. **Văn phong hội thoại đời thường & biểu cảm nhân vật:**
+   - Dịch khẩu ngữ tự nhiên theo cảm xúc nhân vật (vui, buồn, tức giận, mỉa mai), tuân thủ bối cảnh thể loại.
+4. **Tự động dọn dẹp rác OCR:**
+   - Tự động lọc bỏ dấu phẩy rác (`，`), dấu chấm hoặc ký tự lạ dính vào đầu hoặc cuối câu do OCR nhận nhầm đuôi bóng thoại.
+
+### 9.3. Bổ sung Preset Thể loại Âu cổ / Fantasy (`extension/src/core/adapters.ts` & `popup/index.html`)
+- Bổ sung chip preset `au_co` (`+ Âu cổ/Fantasy`):
+  - *Snippet:* `Thể loại: Âu cổ / Quý tộc / Kỳ ảo Tây phương. Giữ tên gốc Latin (Amelia, Wolfgang...). Xưng hô: tôi - cậu/anh/em, ngài - thần, cha/mẹ - con.`
+  - Tự động hiển thị trên cả thanh công cụ nổi trong trang đọc truyện (`contentDrawer`) và giao diện Popup Extension.
+  - Kiểm thử Unit test Extension: 13/13 passed. Build chrome-mv3 thành công.
+
+
 
 
 

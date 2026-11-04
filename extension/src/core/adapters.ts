@@ -6,7 +6,7 @@ export const CUSTOM_CONTEXT_PLACEHOLDER =
   "Truyện Đại Quản Gia Là Ma Hoàng. Thể loại: Tu tiên, trùng sinh. Nam chính Trác Phàm xưng ta - ngươi/bổn tọa...";
 
 export interface ContextPresetChip {
-  id: "tu_tien" | "do_thi" | "hoc_duong" | "he_thong";
+  id: "tu_tien" | "do_thi" | "hoc_duong" | "he_thong" | "au_co";
   label: string;
   snippet: string;
 }
@@ -35,6 +35,12 @@ export const CONTEXT_PRESET_CHIPS: ContextPresetChip[] = [
     label: "+ Hệ thống/Murim",
     snippet:
       "Thể loại: Hệ thống / Thợ săn / Murim. Xưng hô: tôi - cậu/ngươi, ký chủ - hệ thống, giữ thuật ngữ kỹ năng/cấp bậc.",
+  },
+  {
+    id: "au_co",
+    label: "+ Âu cổ/Fantasy",
+    snippet:
+      "Thể loại: Âu cổ / Quý tộc / Kỳ ảo Tây phương. Giữ tên gốc Latin (Amelia, Wolfgang...). Xưng hô: tôi - cậu/anh/em, ngài - thần, cha/mẹ - con.",
   },
 ];
 

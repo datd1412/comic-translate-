@@ -20,9 +20,11 @@ def build_comic_translation_prompt(
 ) -> str:
     """
     Xây dựng prompt dịch truyện tranh sang tiếng Việt:
-    - Kế thừa toàn bộ ngữ cảnh: series_title, custom_context, glossary, previous_lines.
+    - Kế thừa toàn bộ ngữ cảnh: series_title, custom_context (preset thể loại/xưng hô), glossary, previous_lines.
     - Hướng dẫn LLM nắm bắt thứ tự đọc tự nhiên (RTL hoặc LTR), giữ mạch câu thoại giữa các bóng kề nhau.
-    - Yêu cầu tự khắc phục lỗi chính tả OCR dựa theo ngữ cảnh, bảo toàn cảm xúc và văn phong truyện tranh.
+    - Khôi phục tên riêng phương Tây (Back-transliteration): Wolfgang, Amelia, Mozart... thay vì âm Hán-Việt thô kệch.
+    - Khắc phục câu bị ngắt vụn qua nhiều bóng thoại (Sentence fragmentation).
+    - Văn phong tự nhiên, giàu biểu cảm, tự dọn rác OCR ở đầu/cuối bóng thoại (dấu phẩy, đuôi bóng).
     - Chỉ trả về JSON thuần định dạng {"translations": [{"id": ..., "translation": "..."}]} không kèm giải thích.
     """
     ctx = context or {}
@@ -48,7 +50,7 @@ def build_comic_translation_prompt(
         else "Không có thoại trang trước"
     )
     custom_ctx_str = (
-        f"- Bối cảnh bổ sung & Lưu ý xưng hô: {custom_context}\n"
+        f"- Bối cảnh truyện / Thể loại / Quy tắc xưng hô: {custom_context}\n"
         if custom_context
         else ""
     )
@@ -66,26 +68,31 @@ def build_comic_translation_prompt(
     ]
 
     return (
-        f"Bạn là biên dịch viên truyện tranh chuyên nghiệp dịch từ {source_lang_name} sang tiếng Việt.\n"
+        f"Bạn là dịch giả truyện tranh Việt Nam xuất sắc, chuyển ngữ từ {source_lang_name} sang tiếng Việt sống động, mượt mà và tự nhiên.\n"
         f"- Tên bộ truyện: {series_title}\n"
         f"{custom_ctx_str}"
         f"- Bảng thuật ngữ / xưng hô (Glossary): {glossary_str}\n"
-        f"- Các câu thoại liền trước để giữ mạch xưng hô: {prev_str}\n\n"
-        f"ĐẶC ĐIỂM THỨ TỰ ĐỌC:\n"
-        f"Danh sách các khối chữ dưới đây đã được sắp xếp đúng theo THỨ TỰ ĐỌC TỰ NHIÊN: {direction_desc}.\n"
-        "Rất nhiều câu thoại dài bị tác giả chia cắt ra 2 hoặc nhiều bóng thoại liền kề nhau "
-        "(ví dụ bóng trước là 'Con cứ...' và bóng sau nối tiếp là '...đi lấy chồng đi').\n"
-        "Hãy nắm bắt mạch ngữ cảnh liên tục giữa các đoạn để dịch tự nhiên, đúng văn phong hội thoại đời thường, "
-        "tuyệt đối không dịch cụt lủn hay ngắt đôi ngữ nghĩa vô lý.\n\n"
-        "QUY TẮC BẮT BUỘC:\n"
-        "1. Giữ nhất quán đại từ nhân xưng (tôi/cậu, anh/em, ta/ngươi, hắn/nàng...) xuyên suốt trang, phù hợp với ngữ cảnh hội thoại.\n"
-        "2. Tự động sửa chữa các lỗi chính tả do OCR quét nhận diện sai nét chữ Hán/ký tự nếu phát hiện từ vô lý.\n"
-        "3. Câu dịch ngắn gọn, tự nhiên để vừa khung bóng thoại, giữ nguyên sắc thái cảm thán (!, ?, ...).\n"
-        "4. Dịch ĐẦY ĐỦ tất cả các phần tử trong danh sách đầu vào, giữ nguyên chính xác `id` gốc của từng khối.\n"
-        "5. CHỈ TRẢ VỀ DUY NHẤT MỘT JSON OBJECT HỢP LỆ theo mẫu:\n"
+        f"- Các câu thoại trang trước (để giữ mạch ngữ cảnh): {prev_str}\n\n"
+        f"THỨ TỰ ĐỌC TỰ NHIÊN:\n"
+        f"Các khối chữ bên dưới đã được sắp xếp theo đúng thứ tự đọc: {direction_desc}.\n\n"
+        "QUY TẮC DỊCH BẮT BUỘC:\n"
+        "1. KHÔI PHỤC TÊN RIÊNG PHƯƠNG TÂY (BACK-TRANSLITERATION):\n"
+        "   Khi gặp tên nhân vật hoặc địa danh phương Tây được phiên âm sang chữ Hán (ví dụ: 阿梅莉亚 -> Amelia, 沃尔冈夫 -> Wolfgang, 莫扎特 -> Mozart, 玛利亚 -> Maria, 伦敦 -> London, 约翰 -> John), "
+        "BẮT BUỘC khôi phục về tên gốc Latin chuẩn quốc tế. TUYỆT ĐỐI KHÔNG dịch theo âm Hán-Việt thô kệch (như A-mai-lợi-á, Oát-nhĩ-cương-phu).\n"
+        "2. LIÊN KẾT CÂU BỊ TÁCH BÓNG THOẠI (SENTENCE FRAGMENTATION):\n"
+        "   Nhiều câu thoại dài bị chia cắt thành 2 hoặc nhiều bóng thoại liên tiếp. Hãy xem xét tổng thể để hiểu trọn vẹn mạch ý, "
+        "sau đó phân bổ bản dịch tiếng Việt vào từng id tương ứng sao cho tự nhiên, câu từ mạch lạc, không ngắt cụt câu vô lý.\n"
+        "3. VĂN PHONG TRUYỆN TRANH TỰ NHIÊN & THOÁT Ý:\n"
+        "   Dùng khẩu ngữ tiếng Việt đời thường, biểu cảm sống động theo tâm lý nhân vật (vui, buồn, tức giận, mỉa mai). "
+        "Tuân thủ bối cảnh thể loại nếu có cung cấp ở trên. Tránh dịch cứng nhắc từng từ kiểu Google Dịch.\n"
+        "4. TỰ ĐỘNG SỬA LỖI & DỌN RÁC OCR:\n"
+        "   Tự sửa các từ bị OCR nhận diện nhầm nét chữ Hán dựa vào ngữ cảnh. "
+        "Loại bỏ dấu phẩy rác (，), dấu chấm hoặc ký tự lạ ở đầu hoặc cuối câu do dính đuôi bóng thoại.\n"
+        "5. GIỮ NGUYÊN ID VÀ CẤU TRÚC JSON:\n"
+        "   Dịch đầy đủ mọi phần tử trong danh sách, giữ đúng `id`. CHỈ TRẢ VỀ DUY NHẤT MỘT JSON OBJECT theo mẫu:\n"
         '{"translations": [{"id": 0, "translation": "câu dịch 1"}, {"id": 1, "translation": "câu dịch 2"}]}\n'
-        "Tuyệt đối không thêm lời giải thích hay ký hiệu markdown nào ngoài JSON.\n\n"
-        f"DANH SÁCH KHỐI CHỮ CẦN DỊCH (ĐÚNG THỨ TỰ ĐỌC):\n{json.dumps(input_items, ensure_ascii=False)}"
+        "Tuyệt đối không giải thích hay thêm ký hiệu markdown nào bên ngoài JSON.\n\n"
+        f"DANH SÁCH KHỐI CHỮ CẦN DỊCH (THEO THỨ TỰ ĐỌC):\n{json.dumps(input_items, ensure_ascii=False)}"
     )
 
 
@@ -206,6 +213,7 @@ async def translate_blocks_with_llm(
                 "Authorization": f"Bearer {settings.DEEPSEEK_API_KEY}",
                 "Content-Type": "application/json",
             }
+            llm_temp = float(getattr(settings, "LLM_TEMPERATURE", 0.5))
             payload = {
                 "model": settings.DEEPSEEK_MODEL,
                 "messages": [
@@ -215,7 +223,7 @@ async def translate_blocks_with_llm(
                     },
                     {"role": "user", "content": prompt},
                 ],
-                "temperature": 0.2,
+                "temperature": llm_temp,
                 "max_tokens": 2048,
                 "response_format": {"type": "json_object"},
             }
@@ -242,6 +250,7 @@ async def translate_blocks_with_llm(
             "Content-Type": "application/json",
             "x-goog-api-key": settings.GEMINI_API_KEY or "missing-gemini-key",
         }
+        llm_temp = float(getattr(settings, "LLM_TEMPERATURE", 0.5))
         payload = {
             "contents": [
                 {
@@ -250,7 +259,7 @@ async def translate_blocks_with_llm(
                 }
             ],
             "generationConfig": {
-                "temperature": 0.2,
+                "temperature": llm_temp,
                 "maxOutputTokens": 2048,
                 "responseMimeType": "application/json",
             },

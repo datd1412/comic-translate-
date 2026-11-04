@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
     DEEPSEEK_MODEL: str = "deepseek-chat"
     LLM_TIMEOUT_SECONDS: float = 45.0
+    LLM_TEMPERATURE: float = 0.5
 
     # Cấu hình Credit & Chống lạm dụng
     DEFAULT_FREE_CREDITS: int = 20
