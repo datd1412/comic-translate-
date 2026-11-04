@@ -174,21 +174,6 @@ function injectStyles(): void {
       display: inline-block !important;
     }
 
-    .ctvn-image-stage.ctvn-amp-stage {
-      display: block !important;
-      width: 100% !important;
-      max-width: 100% !important;
-      margin: 0 auto !important;
-    }
-
-    /* Đảm bảo ẩn placeholder/spinner của AMP khi ảnh đã tải xong */
-    .ctvn-image-stage amp-img.amp-loaded > [placeholder],
-    .ctvn-image-stage amp-img.i-amphtml-loaded > [placeholder],
-    .ctvn-image-stage amp-img > [placeholder].i-amphtml-hidden-by-child,
-    .ctvn-image-stage [data-ctvn-loaded="true"] [placeholder] {
-      display: none !important;
-    }
-
     .ctvn-image-stage.ctvn-debug-highlight {
       outline: 3px dashed #22c55e !important;
       outline-offset: -3px !important;
@@ -525,13 +510,8 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
   const intersectionObserver = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
-        const el = entry.target as HTMLElement;
-        const item =
-          el instanceof HTMLImageElement
-            ? managedItems.get(el)
-            : Array.from(managedItems.values()).find(
-                (m) => m.stage.contains(el) || m.img === el
-              );
+        const img = entry.target as HTMLImageElement;
+        const item = managedItems.get(img);
         if (!item) {
           continue;
         }
@@ -552,13 +532,8 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
 
   const resizeObserver = new ResizeObserver((entries) => {
     for (const entry of entries) {
-      const el = entry.target as HTMLElement;
-      const item =
-        el instanceof HTMLImageElement
-          ? managedItems.get(el)
-          : Array.from(managedItems.values()).find(
-              (m) => m.stage.contains(el) || m.img === el
-            );
+      const img = entry.target as HTMLImageElement;
+      const item = managedItems.get(img);
       if (item && item.blocks.length > 0) {
         renderOverlayBlocks(item);
       }
@@ -574,13 +549,10 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
     }
     overlayLayer.style.display = "block";
 
-    const ampContainer = img.closest("amp-img");
-    const targetEl = (ampContainer as HTMLElement) || img;
-
     const natW = img.naturalWidth || img.width || 800;
     const natH = img.naturalHeight || img.height || 1200;
-    const dispW = img.clientWidth || targetEl.clientWidth || img.width || natW;
-    const dispH = img.clientHeight || targetEl.clientHeight || img.height || natH;
+    const dispW = img.clientWidth || img.width || natW;
+    const dispH = img.clientHeight || img.height || natH;
 
     const rgbaPixels = trySampleImagePixels(img);
 
@@ -758,33 +730,20 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
   }
 
   function attachToComicImage(img: HTMLImageElement): void {
-    if (managedItems.has(img) || img.closest(".ctvn-image-stage")) {
+    if (managedItems.has(img)) {
       return;
     }
 
-    const ampContainer = img.closest("amp-img");
-    const targetElement = (ampContainer as HTMLElement) || img;
-
     const bestUrl = extractBestImageUrl(img);
     const metrics = {
-      naturalWidth:
-        img.naturalWidth ||
-        Number(img.getAttribute("width")) ||
-        Number(targetElement.getAttribute("width")) ||
-        0,
-      naturalHeight:
-        img.naturalHeight ||
-        Number(img.getAttribute("height")) ||
-        Number(targetElement.getAttribute("height")) ||
-        0,
-      displayWidth:
-        img.clientWidth || targetElement.clientWidth || img.width || 0,
-      displayHeight:
-        img.clientHeight || targetElement.clientHeight || img.height || 0,
+      naturalWidth: img.naturalWidth || Number(img.getAttribute("width")) || 0,
+      naturalHeight: img.naturalHeight || Number(img.getAttribute("height")) || 0,
+      displayWidth: img.clientWidth || img.width || 0,
+      displayHeight: img.clientHeight || img.height || 0,
       src: bestUrl,
-      alt: img.alt || targetElement.getAttribute("alt") || "",
-      className: `${img.className} ${targetElement.className}`,
-      id: img.id || targetElement.id,
+      alt: img.alt,
+      className: img.className,
+      id: img.id,
     };
 
     if (!isComicCandidateImage(metrics, adapter)) {
@@ -798,39 +757,67 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
         img.getAttribute("src")?.startsWith("data:image/gif"))
     ) {
       img.src = bestUrl;
+      if (img.dataset.phase === "placeholder") {
+        img.dataset.phase = "real";
+      }
     }
 
     const stage = document.createElement("div");
-    stage.className = ampContainer
-      ? "ctvn-image-stage ctvn-amp-stage"
-      : "ctvn-image-stage";
+    stage.className = "ctvn-image-stage";
     stage.setAttribute("data-testid", "ctvn-image-stage");
 
-    // Nếu là <amp-img>, bọc bên ngoài toàn bộ phần tử <amp-img> để không làm vỡ sizer/layout nội bộ của AMP.
-    // Nếu là <img> thông thường, bọc quanh <img>.
-    const parent = targetElement.parentNode;
+    const parent = img.parentNode;
     if (!parent) {
       return;
     }
-    parent.insertBefore(stage, targetElement);
-    stage.appendChild(targetElement);
+    parent.insertBefore(stage, img);
+    stage.appendChild(img);
 
-    // Xử lý ẩn placeholder/spinner của AMP khi ảnh tải xong
-    const hideAmpPlaceholder = () => {
-      if (ampContainer) {
-        ampContainer.setAttribute("data-ctvn-loaded", "true");
-        const placeholder = ampContainer.querySelector("[placeholder], .i-amphtml-default-theme");
-        if (placeholder) {
-          (placeholder as HTMLElement).style.setProperty("display", "none", "important");
+    // Dọn dẹp phần tử placeholder/spinner của trang web gốc (như div.placeholder của Baozimh).
+    // Do img đã được bốc vào stage, logic o.parentElement?.querySelector(".placeholder")?.remove()
+    // của web gốc bị trỏ nhầm vào stage và không xóa được placeholder ở thẻ cha cũ.
+    const removeHostPlaceholder = () => {
+      // 1. Kiểm tra phần tử anh em liền kề (trước/sau stage)
+      const prev = stage.previousElementSibling as HTMLElement | null;
+      if (
+        prev &&
+        (prev.classList.contains("placeholder") ||
+          prev.classList.contains("lazyloading") ||
+          prev.id === "loadimg")
+      ) {
+        prev.remove();
+      }
+      const next = stage.nextElementSibling as HTMLElement | null;
+      if (
+        next &&
+        (next.classList.contains("placeholder") ||
+          next.classList.contains("lazyloading"))
+      ) {
+        next.remove();
+      }
+
+      // 2. Nếu thẻ cha chỉ chứa duy nhất bức ảnh này (như div.relative của Baozimh)
+      const p = stage.parentElement;
+      if (p && p.querySelectorAll("img").length <= 1) {
+        const ph = p.querySelector(
+          ".placeholder, .lazyloading, [class*='placeholder']"
+        );
+        if (ph && ph !== stage && !stage.contains(ph)) {
+          ph.remove();
         }
       }
+
+      // Đảm bảo ảnh luôn hiển thị đầy đủ
+      img.style.visibility = "visible";
+      img.style.display = "block";
     };
 
-    if (img.complete && img.naturalWidth > 0) {
-      hideAmpPlaceholder();
+    if (img.complete && (img.naturalWidth > 0 || img.width > 0)) {
+      removeHostPlaceholder();
     } else {
-      img.addEventListener("load", hideAmpPlaceholder, { once: true });
+      img.addEventListener("load", removeHostPlaceholder, { once: true });
     }
+    removeHostPlaceholder();
 
     const overlayLayer = document.createElement("div");
     overlayLayer.className = "ctvn-overlay-layer";
@@ -906,7 +893,7 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
     debugBadge.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const selector = deriveCssSelectorForElement(targetElement);
+      const selector = deriveCssSelectorForElement(img);
       customSelector = selector;
       chrome.runtime.sendMessage({
         type: "SAVE_CUSTOM_SELECTOR",
@@ -916,11 +903,8 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
       debugBadge.textContent = `Đã lưu selector: "${selector}" vào bộ nhớ Extension!`;
     });
 
-    intersectionObserver.observe(targetElement);
-    if (targetElement !== img) {
-      intersectionObserver.observe(img);
-    }
-    resizeObserver.observe(targetElement);
+    intersectionObserver.observe(img);
+    resizeObserver.observe(img);
     if (debugSelectorMode) {
       updateDebugUI();
     }
