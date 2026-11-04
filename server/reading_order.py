@@ -26,36 +26,28 @@ class TextRowCluster:
     def __init__(self, first_block: dict[str, Any], first_bbox: tuple[float, float, float, float]):
         self.blocks: list[dict[str, Any]] = [first_block]
         self.bboxes: list[tuple[float, float, float, float]] = [first_bbox]
-        self.y_min = first_bbox[1]
-        self.y_max = first_bbox[3]
+        # Anchor cố định là y1, y2 của khối đầu tiên (không mở rộng khi add khối mới)
+        self.anchor_y1 = first_bbox[1]
+        self.anchor_y2 = first_bbox[3]
 
-    @property
-    def avg_height(self) -> float:
-        return sum(b[3] - b[1] for b in self.bboxes) / len(self.bboxes)
-
-    @property
-    def avg_center_y(self) -> float:
-        return sum((b[1] + b[3]) / 2.0 for b in self.bboxes) / len(self.bboxes)
-
-    def matches(self, bbox: tuple[float, float, float, float]) -> bool:
+    def vertical_iou(self, bbox: tuple[float, float, float, float]) -> float:
+        """
+        Tính chỉ số IoU theo chiều dọc giữa bbox và anchor cố định của cụm.
+        """
         y1, y2 = bbox[1], bbox[3]
-        h = max(1.0, y2 - y1)
-        cy = (y1 + y2) / 2.0
+        inter = max(0.0, min(self.anchor_y2, y2) - max(self.anchor_y1, y1))
+        union = max(self.anchor_y2, y2) - min(self.anchor_y1, y1)
+        if union <= 0.0:
+            return 0.0
+        return inter / union
 
-        overlap = max(0.0, min(self.y_max, y2) - max(self.y_min, y1))
-        ref_h = max(1.0, min(self.avg_height, h))
-        overlap_ratio = overlap / ref_h
-        center_dist = abs(self.avg_center_y - cy)
-
-        # Gom các block vào cùng một hàng nếu vertical overlap >= 30%
-        # hoặc abs(center_y1 - center_y2) < 0.5 * min(h1, h2)
-        return overlap_ratio >= 0.30 or center_dist < (0.5 * ref_h)
+    def matches(self, bbox: tuple[float, float, float, float], threshold: float) -> bool:
+        return self.vertical_iou(bbox) >= threshold
 
     def add(self, block: dict[str, Any], bbox: tuple[float, float, float, float]) -> None:
         self.blocks.append(block)
         self.bboxes.append(bbox)
-        self.y_min = min(self.y_min, bbox[1])
-        self.y_max = max(self.y_max, bbox[3])
+        # Chú ý: Giữ nguyên anchor_y1, anchor_y2 cố định
 
 
 def sort_blocks_by_reading_order(
@@ -64,10 +56,10 @@ def sort_blocks_by_reading_order(
 ) -> list[dict[str, Any]]:
     """
     Sắp xếp các khối văn bản (text blocks) theo thứ tự đọc tự nhiên của truyện tranh:
-    - Thuật toán Vertical Overlap Clustering: gom các bóng thoại cùng hàng ngang.
-    - Sắp xếp các hàng từ Trên xuống Dưới (y_min tăng dần).
+    - Thuật toán Vertical Overlap Clustering với anchor cố định: gom các bóng thoại cùng hàng ngang.
+    - Sắp xếp các hàng từ Trên xuống Dưới (anchor_y1 tăng dần).
     - Trong từng hàng:
-        + Nếu reading_direction == "rtl" (Manga Nhật / Manhua): sắp xếp Phải -> Trái (x_min giảm dần).
+        + Nếu reading_direction == "rtl" (Manga Nhật): sắp xếp Phải -> Trái (x_min giảm dần).
         + Nếu reading_direction == "ltr" (Manhwa Hàn / Webtoon): sắp xếp Trái -> Phải (x_min tăng dần).
     - Giữ nguyên 100% tất cả các trường dữ liệu gốc (id, bbox, text, v.v.).
     """
@@ -78,6 +70,7 @@ def sort_blocks_by_reading_order(
 
     direction = (reading_direction or "rtl").strip().lower()
     is_rtl = direction != "ltr"
+    threshold = 0.3 if is_rtl else 0.5
 
     # Sắp xếp thô ban đầu theo chiều dọc từ trên xuống dưới
     indexed_blocks = [(b, extract_bbox(b)) for b in blocks]
@@ -87,14 +80,13 @@ def sort_blocks_by_reading_order(
 
     for block, bbox in indexed_blocks:
         best_cluster: TextRowCluster | None = None
-        best_dist = float("inf")
-        b_cy = (bbox[1] + bbox[3]) / 2.0
+        best_iou = -1.0
 
         for cluster in clusters:
-            if cluster.matches(bbox):
-                dist = abs(cluster.avg_center_y - b_cy)
-                if dist < best_dist:
-                    best_dist = dist
+            iou = cluster.vertical_iou(bbox)
+            if iou >= threshold:
+                if iou > best_iou:
+                    best_iou = iou
                     best_cluster = cluster
 
         if best_cluster is not None:
@@ -102,8 +94,8 @@ def sort_blocks_by_reading_order(
         else:
             clusters.append(TextRowCluster(block, bbox))
 
-    # Sắp xếp các cụm dòng từ Trên xuống Dưới
-    clusters.sort(key=lambda c: (c.y_min, c.avg_center_y))
+    # Sắp xếp các cụm dòng từ Trên xuống Dưới theo anchor
+    clusters.sort(key=lambda c: (c.anchor_y1, c.anchor_y2))
 
     # Trong từng cụm dòng, sắp xếp theo x_min
     result: list[dict[str, Any]] = []
@@ -115,4 +107,3 @@ def sort_blocks_by_reading_order(
         result.extend(cluster.blocks)
 
     return result
-
