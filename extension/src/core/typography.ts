@@ -95,10 +95,10 @@ export function fitTextInBox(
   options: FitTextOptions = {}
 ): FittedTextLayout {
   const cleaned = (text || "").replace(/\s+/g, " ").trim();
-  const minFont = options.minFontSize ?? 10;
+  const minFont = options.minFontSize ?? 9.5;
   const maxFont = options.maxFontSize ?? 26;
-  const lineHeightRatio = options.lineHeightRatio ?? 1.24;
-  const paddingPx = options.paddingPx ?? 4;
+  const lineHeightRatio = options.lineHeightRatio ?? 1.22;
+  const paddingPx = options.paddingPx ?? 3;
 
   const usableW = Math.max(16, boxWidth - paddingPx * 2);
   const usableH = Math.max(14, boxHeight - paddingPx * 2);
@@ -147,14 +147,21 @@ export function fitTextInBox(
     return lines;
   };
 
-  for (let fontSize = maxFont; fontSize >= minFont; fontSize -= 1) {
+  for (
+    let fontSize = maxFont;
+    fontSize >= minFont - 0.001;
+    fontSize = Math.round((fontSize - 0.5) * 10) / 10
+  ) {
     const lines = wrapAtFontSize(fontSize);
-    const lineHeightPx = Math.max(fontSize + 2, Math.round(fontSize * lineHeightRatio));
+    const lineHeightPx = Math.max(
+      Math.round(fontSize) + 2,
+      Math.round(fontSize * lineHeightRatio)
+    );
     const totalHeight = lines.length * lineHeightPx;
     const longestLineChars = Math.max(...lines.map((l) => l.length), 1);
-    const estMaxLineWidth = longestLineChars * fontSize * 0.54;
+    const estMaxLineWidth = longestLineChars * fontSize * 0.53;
 
-    if (totalHeight <= usableH && estMaxLineWidth <= usableW * 1.08) {
+    if (totalHeight <= usableH && estMaxLineWidth <= usableW * 1.05) {
       return {
         fontSizePx: fontSize,
         lineHeightPx,
