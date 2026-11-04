@@ -277,11 +277,11 @@ def _are_lines_in_same_bubble(a: ShiftedLine, b: ShiftedLine) -> bool:
         # Hai cột chữ dọc: chiều rộng cột đại diện cho cỡ chữ (font size)
         col_w = max(a.width, b.width, 1.0)
         min_w = max(1.0, min(a.width, b.width))
-        if col_w / min_w > 2.5:
+        if col_w / min_w > 2.8:
             return False
 
-        # Khoảng cách ngang giữa hai cột trong cùng bong bóng (rất sát nhau)
-        if gap_x > col_w * 1.35 or gap_x > 38.0:
+        # Khoảng cách ngang giữa hai cột trong cùng bong bóng (rất sát nhau, <= 50px)
+        if gap_x > col_w * 1.5 or gap_x > 50.0:
             return False
 
         # Hai cột cạnh nhau trong cùng bong bóng bắt buộc phải có vùng phủ theo trục dọc Y
