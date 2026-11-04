@@ -264,42 +264,58 @@ def _are_lines_in_same_bubble(a: ShiftedLine, b: ShiftedLine) -> bool:
     Kiểm tra hai dòng có thuộc cùng một khối bong bóng thoại hay không dựa trên khoảng cách hình học.
     Hỗ trợ cả cụm dòng ngang xếp dọc và cụm cột dọc xếp cạnh nhau.
     """
-    # 1. Chặn gom dòng banner lề trang (cột dọc rất cao >= 280px, hẹp <= 75px) với thoại trong tranh
-    if (a.height >= 280 and a.width <= 75 and a.height > a.width * 3.0) or (
-        b.height >= 280 and b.width <= 75 and b.height > b.width * 3.0
-    ):
-        return False
+    gap_x = max(0.0, max(a.bbox[0] - b.bbox[2], b.bbox[0] - a.bbox[2]))
+    gap_y = max(0.0, max(a.bbox[1] - b.bbox[3], b.bbox[1] - a.bbox[3]))
 
-    # 2. Chặn gom các dòng có kích thước chênh lệch quá lớn (không thể cùng một bong bóng thoại)
-    max_h = max(a.height, b.height)
-    min_h = max(1, min(a.height, b.height))
-    if max_h / min_h > 3.2:
-        return False
-
-    gap_x = max(0, max(a.bbox[0] - b.bbox[2], b.bbox[0] - a.bbox[2]))
-    gap_y = max(0, max(a.bbox[1] - b.bbox[3], b.bbox[1] - a.bbox[3]))
-
-    overlap_x = max(0, min(a.bbox[2], b.bbox[2]) - max(a.bbox[0], b.bbox[0]))
-    overlap_y = max(0, min(a.bbox[3], b.bbox[3]) - max(a.bbox[1], b.bbox[1]))
+    overlap_x = max(0.0, min(a.bbox[2], b.bbox[2]) - max(a.bbox[0], b.bbox[0]))
+    overlap_y = max(0.0, min(a.bbox[3], b.bbox[3]) - max(a.bbox[1], b.bbox[1]))
 
     a_vert = a.height > a.width * 1.25
     b_vert = b.height > b.width * 1.25
 
     if a_vert and b_vert:
-        # Hai cột chữ dọc: chiều rộng cột là cỡ chữ
-        col_w = max(a.width, b.width, 1)
-        min_h = max(1, min(a.height, b.height))
-        return gap_x <= col_w * 1.6 and (overlap_y / min_h >= 0.20 or gap_y <= col_w * 0.8)
+        # Hai cột chữ dọc: chiều rộng cột đại diện cho cỡ chữ (font size)
+        col_w = max(a.width, b.width, 1.0)
+        min_w = max(1.0, min(a.width, b.width))
+        if col_w / min_w > 2.5:
+            return False
+
+        # Khoảng cách ngang giữa hai cột trong cùng bong bóng
+        if gap_x > col_w * 2.0 or gap_x > 85.0:
+            return False
+
+        # Kiểm tra căn lề / chồng lấn dọc: hai cột trong cùng bong bóng có độ phủ Y hoặc chung lề trên/dưới
+        min_h = max(1.0, min(a.height, b.height))
+        y_aligned = (
+            (overlap_y / min_h >= 0.15)
+            or (abs(a.bbox[1] - b.bbox[1]) <= col_w * 2.5)
+            or (abs(a.bbox[3] - b.bbox[3]) <= col_w * 2.5)
+        )
+        return y_aligned and gap_y <= col_w * 1.5
 
     if not a_vert and not b_vert:
-        # Hai dòng chữ ngang: chiều cao dòng là cỡ chữ
-        line_h = max(a.height, b.height, 1)
-        min_w = max(1, min(a.width, b.width))
-        return gap_y <= line_h * 1.35 and (overlap_x / min_w >= 0.20 or gap_x <= line_h * 1.2)
+        # Hai dòng chữ ngang: chiều cao dòng đại diện cho cỡ chữ (font size)
+        line_h = max(a.height, b.height, 1.0)
+        min_h = max(1.0, min(a.height, b.height))
+        if line_h / min_h > 2.5:
+            return False
+
+        # Khoảng cách dọc giữa hai dòng trong cùng bong bóng
+        if gap_y > line_h * 1.5 or gap_y > 85.0:
+            return False
+
+        # Kiểm tra căn lề / chồng lấn ngang: hai dòng có độ phủ X hoặc chung lề trái/phải
+        min_w = max(1.0, min(a.width, b.width))
+        x_aligned = (
+            (overlap_x / min_w >= 0.15)
+            or (abs(a.bbox[0] - b.bbox[0]) <= line_h * 2.5)
+            or (abs(a.bbox[2] - b.bbox[2]) <= line_h * 2.5)
+        )
+        return x_aligned and gap_x <= line_h * 1.5
 
     # Một dòng có bbox gần vuông (ví dụ dòng 1-2 ký tự cuối câu) nằm cạnh dòng dài
-    char_scale = max(1, min(min(a.width, a.height), min(b.width, b.height)))
-    return gap_x <= char_scale * 1.5 and gap_y <= char_scale * 1.3
+    char_scale = max(1.0, min(min(a.width, a.height), min(b.width, b.height)))
+    return gap_x <= char_scale * 1.6 and gap_y <= char_scale * 1.4
 
 
 def _meaningful_char_count(text: str) -> int:
