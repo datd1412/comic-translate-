@@ -22,7 +22,8 @@ from database import (
     refund_credits_atomic,
     utcnow,
 )
-from reading_order import sort_blocks_by_reading_order
+from ocr_postprocess import normalize_text, split_blocks
+from reading_order import extract_bbox, sort_blocks_by_reading_order
 from translator import LLMTranslationError, translate_blocks_with_llm
 
 router = APIRouter(prefix="/api/v1/page", tags=["Page Translation"])
@@ -301,16 +302,41 @@ async def translate_comic_page(
         ocr_blocks = ocr_result.get("blocks") or []
 
         if ocr_blocks:
-            sorted_ocr_blocks = sort_blocks_by_reading_order(
-                ocr_blocks, reading_direction=effective_direction
+            # 1. Gọi normalize_text
+            for block in ocr_blocks:
+                normalize_text(block)
+
+            # 2. Gọi split_blocks
+            dialogue, edge_strips, ignored = split_blocks(
+                ocr_blocks, img_w=img_width, img_h=img_height
             )
-            translated_blocks = await translate_blocks_with_llm(
-                blocks=sorted_ocr_blocks,
-                lang_pair=normalized_pair,
-                context=context_dict,
-                reading_direction=effective_direction,
-                http_client=http_client,
+
+            # 3. Chỉ sort_blocks_by_reading_order phần dialogue
+            sorted_dialogue = sort_blocks_by_reading_order(
+                dialogue, reading_direction=effective_direction
             )
+
+            # Giữ nguyên thứ tự từ trên xuống của edge_strips
+            sorted_edge_strips = sorted(edge_strips, key=lambda b: extract_bbox(b)[1])
+
+            # 4. Danh sách đưa vào LLM = edge_strips (đặt trước) + dialogue đã sort
+            final_blocks = sorted_edge_strips + sorted_dialogue
+
+            # 5. Gán lại id = 0..n-1 theo thứ tự cuối cùng
+            for new_id, block in enumerate(final_blocks):
+                block["id"] = new_id
+
+            # 6. Dịch bằng LLM (khối ignored không dịch và không trả về client)
+            if final_blocks:
+                translated_blocks = await translate_blocks_with_llm(
+                    blocks=final_blocks,
+                    lang_pair=normalized_pair,
+                    context=context_dict,
+                    reading_direction=effective_direction,
+                    http_client=http_client,
+                )
+            else:
+                translated_blocks = []
         else:
             translated_blocks = []
 
