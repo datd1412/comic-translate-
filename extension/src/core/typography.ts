@@ -51,6 +51,7 @@ export interface FittedTextLayout {
   lineHeightPx: number;
   lines: string[];
   fitsWithoutOverflow: boolean;
+  neededHeightPx: number;
 }
 
 /**
@@ -108,6 +109,7 @@ export function fitTextInBox(
       lineHeightPx: Math.round(minFont * lineHeightRatio),
       lines: [],
       fitsWithoutOverflow: true,
+      neededHeightPx: paddingPx * 2,
     };
   }
 
@@ -158,16 +160,19 @@ export function fitTextInBox(
         lineHeightPx,
         lines,
         fitsWithoutOverflow: true,
+        neededHeightPx: totalHeight + paddingPx * 2,
       };
     }
   }
 
   const fallbackLines = wrapAtFontSize(minFont);
   const fallbackLineHeight = Math.max(minFont + 2, Math.round(minFont * lineHeightRatio));
+  const fallbackHeight = fallbackLines.length * fallbackLineHeight + paddingPx * 2;
   return {
     fontSizePx: minFont,
     lineHeightPx: fallbackLineHeight,
     lines: fallbackLines,
     fitsWithoutOverflow: fallbackLines.length * fallbackLineHeight <= usableH,
+    neededHeightPx: fallbackHeight,
   };
 }
