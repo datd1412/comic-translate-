@@ -79,7 +79,7 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
               style={styles.input}
               value={url}
               onChangeText={setUrl}
-              placeholder="http://172.20.10.3:8000"
+              placeholder="http://172.20.10.4:8000"
               placeholderTextColor="#64748B"
               autoCapitalize="none"
               autoCorrect={false}
@@ -106,9 +106,9 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
           <View style={styles.presetRow}>
             <TouchableOpacity
               style={styles.presetBtn}
-              onPress={() => setUrl('http://172.20.10.3:8000')}
+              onPress={() => setUrl('http://172.20.10.4:8000')}
             >
-              <Text style={styles.presetText}>Wi-Fi hiện tại (172.20.10.3)</Text>
+              <Text style={styles.presetText}>Wi-Fi hiện tại (172.20.10.4)</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.presetBtn}

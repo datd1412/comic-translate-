@@ -275,6 +275,7 @@ def test_concurrent_20_requests_only_5_succeed_and_ledger_matches(test_env: dict
 # ==============================================================================
 @pytest.mark.parametrize("failure_mode,expected_status", [
     ("ocr_500", 502),
+    ("ocr_offline", 502),
     ("llm_500", 502),
     ("timeout", 504),
 ])
@@ -298,6 +299,8 @@ def test_refund_credits_on_ocr_error_llm_error_or_timeout(
         if failure_mode == "timeout":
             raise httpx.ReadTimeout("Simulated upstream timeout", request=request)
         if url_str.endswith("/v1/ocr-page"):
+            if failure_mode == "ocr_offline":
+                raise httpx.ConnectError("OCR is not running", request=request)
             if failure_mode == "ocr_500":
                 return httpx.Response(500, json={"detail": "OCR crashed"})
             return httpx.Response(

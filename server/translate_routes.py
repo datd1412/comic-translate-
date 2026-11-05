@@ -335,8 +335,12 @@ async def translate_comic_page(
                     http_client=http_client,
                 )
             except (httpx.ConnectError, httpx.HTTPError, HTTPException) as ocr_err:
-                print(f"[INFO] OCR service offline, continuing standalone: {ocr_err}")
-                ocr_result = {"blocks": []}
+                if isinstance(ocr_err, httpx.TimeoutException):
+                    raise
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Không thể nhận diện văn bản. Hãy kiểm tra dịch vụ OCR và cấu hình nhận diện bong bóng trên server. Đã hoàn lại credit.",
+                ) from ocr_err
             ocr_blocks = ocr_result.get("blocks") or []
 
             if ocr_blocks:

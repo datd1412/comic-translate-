@@ -1,4 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import { File } from 'expo-file-system';
+import { fetch as expoFetch } from 'expo/fetch';
 
 export interface PayOSOrder {
   order_id: string;
@@ -199,8 +201,7 @@ export const translatePageWithImageUrl = async (
     }
   }
 
-  const cleanServerUrl = (serverUrl || 'http://172.20.10.3:8000').replace(/\/$/, '');
-  const mimeType = fileExt === 'png' ? 'image/png' : 'image/jpeg';
+  const cleanServerUrl = (serverUrl || 'http://172.20.10.4:8000').replace(/\/$/, '');
   const fileName = `page.${fileExt}`;
   const idempotencyKey = `ctvn_mobile_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   const contextJson = JSON.stringify({
@@ -210,77 +211,33 @@ export const translatePageWithImageUrl = async (
 
   const effectiveToken = accessToken || 'dev_token_student@mma301.fpt.edu.vn';
 
-  // 2. Gửi file lên server: Ưu tiên FileSystem.uploadAsync (Native module tránh lỗi FormDataPart của Android)
+  // SDK 58 accepts File/Blob multipart parts rather than URI descriptors.
   try {
-    const uploadResult = await FileSystem.uploadAsync(
-      `${cleanServerUrl}/api/v1/page/translate`,
-      localFilePath,
-      {
-        httpMethod: 'POST',
-        uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-        fieldName: 'image',
-        mimeType,
-        parameters: {
-          lang_pair: params.langPair || 'zh-vi',
-          idempotency_key: idempotencyKey,
-          ...(params.readingDirection ? { reading_direction: params.readingDirection } : {}),
-          context_json: contextJson,
-        },
-        headers: { Authorization: `Bearer ${effectiveToken}` },
-      }
-    );
-
-    FileSystem.deleteAsync(localFilePath, { idempotent: true }).catch(() => {});
-
-    if (uploadResult.status === 200) {
-      return JSON.parse(uploadResult.body);
+    const formData = new FormData();
+    formData.append('image', new File(localFilePath), fileName);
+    formData.append('lang_pair', params.langPair || 'zh-vi');
+    formData.append('idempotency_key', idempotencyKey);
+    if (params.readingDirection) {
+      formData.append('reading_direction', params.readingDirection);
     }
+    formData.append('context_json', contextJson);
 
-    let errDetail = uploadResult.body;
-    try {
-      const parsed = JSON.parse(uploadResult.body);
-      errDetail = parsed.detail || parsed.error || errDetail;
-    } catch {}
-    throw new Error(errDetail || `Lỗi dịch trang từ server (HTTP ${uploadResult.status})`);
-  } catch (nativeErr: any) {
-    // 3. Fallback: Nếu native uploadAsync gặp sự cố, dùng Fetch với object FormData đúng chuẩn React Native
-    try {
-      const formData = new FormData();
-      formData.append('image', {
-        uri: localFilePath,
-        name: fileName,
-        type: mimeType,
-      } as any);
-      formData.append('lang_pair', params.langPair || 'zh-vi');
-      formData.append('idempotency_key', idempotencyKey);
-      if (params.readingDirection) {
-        formData.append('reading_direction', params.readingDirection);
-      }
-      formData.append('context_json', contextJson);
-
-      const headers: Record<string, string> = {
+    const res = await expoFetch(`${cleanServerUrl}/api/v1/page/translate`, {
+      method: 'POST',
+      body: formData,
+      headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${effectiveToken}`,
-      };
+      },
+    });
 
-      const res = await fetch(`${cleanServerUrl}/api/v1/page/translate`, {
-        method: 'POST',
-        body: formData,
-        headers,
-      });
-
-      FileSystem.deleteAsync(localFilePath, { idempotent: true }).catch(() => {});
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || err.error || `Lỗi từ server (HTTP ${res.status})`);
-      }
-
-      return await res.json();
-    } catch (fetchErr: any) {
-      FileSystem.deleteAsync(localFilePath, { idempotent: true }).catch(() => {});
-      throw new Error(fetchErr.message || nativeErr.message || 'Lỗi gửi ảnh dịch');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || err.error || `HTTP ${res.status}`);
     }
+    return await res.json();
+  } finally {
+    await FileSystem.deleteAsync(localFilePath, { idempotent: true }).catch(() => {});
   }
 };
 
