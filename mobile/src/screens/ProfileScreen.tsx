@@ -77,7 +77,7 @@ export const ProfileScreen: React.FC = () => {
     try {
       setLoggingIn(true);
       const redirectUrl = Linking.createURL('callback');
-      const cleanServer = (serverUrl || 'http://172.20.10.4:8000').replace(/\/$/, '');
+      const cleanServer = (serverUrl || 'http://192.168.1.5:8000').replace(/\/$/, '');
       const authUrl = `${cleanServer}/login/?redirect_uri=${encodeURIComponent(redirectUrl)}`;
 
       console.log('[AUTH] Mở WebBrowser đăng nhập Google:', authUrl);

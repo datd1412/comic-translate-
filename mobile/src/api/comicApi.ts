@@ -15,7 +15,7 @@ export interface PayOSOrder {
 
 export interface TranslatedBlock {
   id: number;
-  bbox: [number, number, number, number]; // [ymin, xmin, ymax, xmax]
+  bbox: [number, number, number, number]; // [x1, y1, x2, y2], pixels in the uploaded image
   source_text: string;
   translation: string;
 }
@@ -42,6 +42,8 @@ export interface AuthResponse {
 
 export interface TranslateApiResponse {
   blocks: TranslatedBlock[];
+  image_width?: number;
+  image_height?: number;
   lang_pair: string;
   reading_direction?: string;
   cached: boolean;
@@ -201,7 +203,7 @@ export const translatePageWithImageUrl = async (
     }
   }
 
-  const cleanServerUrl = (serverUrl || 'http://172.20.10.4:8000').replace(/\/$/, '');
+  const cleanServerUrl = (serverUrl || 'http://192.168.1.5:8000').replace(/\/$/, '');
   const fileName = `page.${fileExt}`;
   const idempotencyKey = `ctvn_mobile_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   const contextJson = JSON.stringify({
@@ -216,6 +218,8 @@ export const translatePageWithImageUrl = async (
     const formData = new FormData();
     formData.append('image', new File(localFilePath), fileName);
     formData.append('lang_pair', params.langPair || 'zh-vi');
+    // Detect text rectangles, translate their contents and replace at the same coordinates.
+    formData.append('layout_mode', 'text_regions');
     formData.append('idempotency_key', idempotencyKey);
     if (params.readingDirection) {
       formData.append('reading_direction', params.readingDirection);

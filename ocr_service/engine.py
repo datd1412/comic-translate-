@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import inspect
 import logging
@@ -174,9 +175,11 @@ class PaddleOCREngine(OCREngine):
         self.cpu_threads = cpu_threads
         self._instances: dict[str, Any] = {}
         self._lock = threading.Lock()
+        # Keep native predictor creation and inference on the same thread.
+        self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="paddle-ocr")
 
         for lg in preload_langs:
-            self._get_or_create_instance(lg)
+            self._worker.submit(self._get_or_create_instance, lg).result()
 
     def _get_or_create_instance(self, lang: str) -> Any:
         paddle_lang = LANG_MAP.get(lang.lower(), lang.lower())
@@ -241,9 +244,12 @@ class PaddleOCREngine(OCREngine):
             return instance
 
     def detect_and_recognize(self, image_rgb: Image.Image, lang: str) -> list[DetectedLine]:
+        return self._worker.submit(self._predict, image_rgb, lang).result()
+
+    def _predict(self, image_rgb: Image.Image, lang: str) -> list[DetectedLine]:
         ocr_inst = self._get_or_create_instance(lang)
         rgb_arr = np.array(image_rgb.convert("RGB"))
-        bgr_arr = rgb_arr[:, :, ::-1]
+        bgr_arr = np.ascontiguousarray(rgb_arr[:, :, ::-1])
 
         if hasattr(ocr_inst, "predict"):
             raw_out = list(ocr_inst.predict(bgr_arr))

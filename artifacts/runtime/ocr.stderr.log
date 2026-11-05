@@ -1,0 +1,38 @@
+INFO:     Started server process [19032]
+INFO:     Waiting for application startup.
+2026-11-05 20:44:55,750 [INFO] ocr_service: Initializing PaddleOCREngine on startup...
+D:\comic-translate-\ocr_service\.venv\lib\site-packages\pydantic\_internal\_fields.py:151: UserWarning: Field "model_kwargs" has conflict with protected namespace "model_".
+
+You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+  warnings.warn(
+Creating model: ('PP-OCRv5_mobile_det', None, None)
+Model files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Users\admin\.paddlex\official_models\PP-OCRv5_mobile_det`.
+INFO: Could not find files for the given pattern(s).
+D:\comic-translate-\ocr_service\.venv\lib\site-packages\paddle\utils\cpp_extension\extension_utils.py:718: UserWarning: No ccache found. Please be aware that recompiling all source files may be required. You can download and install ccache from: https://github.com/ccache/ccache/blob/master/doc/INSTALL.md
+  warnings.warn(warning_message)
+Creating model: ('PP-OCRv5_mobile_rec', None, None)
+Model files already exist. Using cached files. To redownload, please delete the directory manually: `C:\Users\admin\.paddlex\official_models\PP-OCRv5_mobile_rec`.
+2026-11-05 20:45:06,906 [INFO] ocr_service.engine: Loaded PaddleOCR mobile engine (PP-OCRv5_mobile_det + PP-OCRv5_mobile_rec) for cache_key=mobile_v5_shared
+2026-11-05 20:45:06,907 [INFO] ocr_service: PaddleOCREngine ready in 11156.92 ms
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
+2026-11-05 20:45:32,137 [INFO] ocr_service: ocr_page lang=zh size=1280x1000 slices=1 raw_lines=1 blocks=1 decode_ms=48.84 ocr_engine_ms=1996.84 postprocess_ms=0.28 total_ms=2047.07
+2026-11-05 20:52:13,099 [INFO] ocr_service: ocr_page lang=zh size=1300x3627 slices=3 raw_lines=7 blocks=2 decode_ms=51.32 ocr_engine_ms=14455.43 postprocess_ms=0.55 total_ms=14508.72
+2026-11-05 21:02:08,848 [INFO] ocr_service: ocr_page lang=zh size=1300x2321 slices=2 raw_lines=8 blocks=3 decode_ms=31.72 ocr_engine_ms=9228.64 postprocess_ms=0.64 total_ms=9262.43
+2026-11-05 21:05:39,328 [INFO] ocr_service: ocr_page lang=zh size=690x1644 slices=2 raw_lines=4 blocks=1 decode_ms=17.07 ocr_engine_ms=3956.88 postprocess_ms=0.26 total_ms=3975.20
+2026-11-05 21:25:48,885 [INFO] ocr_service: ocr_page lang=zh size=690x1323 slices=1 raw_lines=3 blocks=1 decode_ms=6.21 ocr_engine_ms=2510.62 postprocess_ms=0.29 total_ms=2517.96
+2026-11-05 21:26:21,585 [INFO] ocr_service: ocr_page lang=zh size=690x1647 slices=2 raw_lines=13 blocks=4 decode_ms=14.17 ocr_engine_ms=10321.89 postprocess_ms=0.81 total_ms=10337.73
+2026-11-05 21:34:14,908 [INFO] ocr_service: ocr_page lang=zh size=690x1667 slices=2 raw_lines=5 blocks=3 decode_ms=17.34 ocr_engine_ms=4743.69 postprocess_ms=0.50 total_ms=4762.72
+2026-11-05 21:34:25,999 [INFO] ocr_service: ocr_page lang=zh size=690x690 slices=1 raw_lines=6 blocks=1 decode_ms=7.54 ocr_engine_ms=5695.93 postprocess_ms=0.42 total_ms=5705.06
+2026-11-05 21:34:35,790 [INFO] ocr_service: ocr_page lang=zh size=690x1542 slices=2 raw_lines=2 blocks=1 decode_ms=7.17 ocr_engine_ms=3127.01 postprocess_ms=0.17 total_ms=3135.05
+2026-11-05 21:35:00,708 [INFO] ocr_service: ocr_page lang=zh size=690x1853 slices=2 raw_lines=3 blocks=1 decode_ms=18.80 ocr_engine_ms=3898.26 postprocess_ms=0.49 total_ms=3918.56
+2026-11-05 21:35:53,015 [INFO] ocr_service: ocr_page lang=zh size=690x1794 slices=2 raw_lines=4 blocks=2 decode_ms=14.44 ocr_engine_ms=4565.45 postprocess_ms=0.39 total_ms=4581.19
+2026-11-05 21:36:27,893 [INFO] ocr_service: ocr_page lang=zh size=690x947 slices=1 raw_lines=1 blocks=1 decode_ms=6.79 ocr_engine_ms=1595.30 postprocess_ms=0.15 total_ms=1602.89
+2026-11-05 21:36:38,480 [INFO] ocr_service: ocr_page lang=zh size=690x1464 slices=1 raw_lines=3 blocks=2 decode_ms=9.03 ocr_engine_ms=3393.52 postprocess_ms=0.54 total_ms=3404.21
+2026-11-05 21:36:55,946 [INFO] ocr_service: ocr_page lang=zh size=1200x937 slices=1 raw_lines=0 blocks=0 decode_ms=5.28 ocr_engine_ms=2284.27 postprocess_ms=0.01 total_ms=2290.17
+2026-11-05 21:37:06,959 [INFO] ocr_service: ocr_page lang=zh size=1200x937 slices=1 raw_lines=6 blocks=2 decode_ms=10.63 ocr_engine_ms=4542.80 postprocess_ms=0.45 total_ms=4554.75
+2026-11-05 21:37:21,792 [INFO] ocr_service: ocr_page lang=zh size=1200x937 slices=1 raw_lines=1 blocks=1 decode_ms=8.71 ocr_engine_ms=2572.62 postprocess_ms=0.24 total_ms=2582.42
+2026-11-05 21:37:49,921 [INFO] ocr_service: ocr_page lang=zh size=1200x937 slices=1 raw_lines=1 blocks=0 decode_ms=9.73 ocr_engine_ms=2556.44 postprocess_ms=0.12 total_ms=2567.01
+2026-11-05 21:38:04,329 [INFO] ocr_service: ocr_page lang=zh size=1200x564 slices=1 raw_lines=1 blocks=0 decode_ms=5.81 ocr_engine_ms=1698.08 postprocess_ms=0.12 total_ms=1704.67
+2026-11-05 21:38:19,072 [INFO] ocr_service: ocr_page lang=zh size=1200x937 slices=1 raw_lines=0 blocks=0 decode_ms=7.77 ocr_engine_ms=2534.61 postprocess_ms=0.01 total_ms=2543.05
+2026-11-05 21:38:27,176 [INFO] ocr_service: ocr_page lang=zh size=1200x563 slices=1 raw_lines=1 blocks=1 decode_ms=4.89 ocr_engine_ms=1726.23 postprocess_ms=0.18 total_ms=1732.07

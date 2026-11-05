@@ -2,6 +2,35 @@
 
 Ứng dụng Đọc truyện tranh & Dịch trực tiếp bằng AI (React Native Expo Go) kết nối với Backend Server chạy trên máy tính (FastAPI + Gemini AI + OCR).
 
+Khung dịch mobile dùng tọa độ `[x1, y1, x2, y2]` trên ảnh gốc. Backend trả thêm
+`image_width` và `image_height` để quy đổi chính xác khi website hiển thị thumbnail.
+Mobile gửi `layout_mode=text_regions`: OCR tìm hình chữ nhật bao quanh từng cụm
+chữ, nhận diện nội dung trong vùng đó và dịch; bản dịch được đặt lại vào chính
+khung chữ nhật ấy với nền trắng che chữ gốc. Không dùng biên ngoài bóng thoại
+làm vùng phủ. Cache được tách theo chế độ để không lấy nhầm khung cũ.
+Chữ được đo bằng font thực tế và co trong giới hạn 9–16 CSS px, không nới khung
+che tranh. Nếu nội dung không vừa, khung hiển thị `…`; chạm vào khung để đọc toàn
+bộ bản dịch và chữ gốc. Nút **Xem ảnh gốc** ẩn lớp dịch trên tất cả ảnh đã dịch.
+Lớp phủ được đặt ngoài DOM của reader để tránh bị AMP/lazy-loader ẩn. Khi dịch
+mới, app tự hiện bản dịch và chờ WebView xác nhận đã vẽ khung trước khi báo thành công.
+
+Bấm **Dịch khi cuộn** để bật xử lý tuần tự các ảnh đang hiện và sát màn hình.
+Cuộn lên hoặc xuống để dịch tiếp; ảnh đã xử lý không được gửi lặp trong cùng
+ngữ cảnh dịch. **Mỗi ảnh vẫn tính credit theo backend**. Bấm **Dừng tự dịch** để
+ngừng gửi ảnh mới (ảnh đang xử lý sẽ hoàn tất). Chế độ tự dừng khi chuyển trang,
+đổi cấu hình dịch, hết credit hoặc có lỗi; các lớp dịch đã vẽ vẫn được giữ lại.
+
+Kiểm tra hồi quy layout từ thư mục gốc:
+
+```bash
+node --test scripts/mobile-overlay.test.cjs
+```
+
+Bài kiểm tra dùng Playwright trong `extension/node_modules` và Chrome đã cài;
+có thể đặt `PLAYWRIGHT_CHANNEL=msedge` để dùng Edge. Kiểm tra các chiều rộng
+320/390/430/780px, thay đổi kích thước, câu dài, ảnh cuộn dài và nhiều ảnh cùng parent.
+Sau khi cập nhật, khởi động lại backend và reload app/trang truyện để nạp script mới.
+
 ---
 
 ## 🏗️ Kiến Trúc Hệ Thống (Client - Server)

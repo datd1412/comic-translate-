@@ -9,8 +9,8 @@ interface SettingsState {
 }
 
 const initialState: SettingsState = {
-  // IP Wi-Fi của máy tính đang chạy Backend (172.20.10.4)
-  serverUrl: 'http://172.20.10.4:8000',
+  // IP Wi-Fi của máy tính đang chạy Backend (192.168.1.5)
+  serverUrl: 'http://192.168.1.5:8000',
   langPair: 'zh-vi',
   readingDirection: 'rtl',
   autoTranslate: false,

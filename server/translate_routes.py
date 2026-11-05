@@ -86,6 +86,7 @@ async def translate_comic_page(
     idempotency_key: str = Form(...),
     reading_direction: str | None = Form(None),
     context_json: str | None = Form(None),
+    layout_mode: str = Form("bubbles"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -103,6 +104,8 @@ async def translate_comic_page(
             detail=f"Cặp ngôn ngữ '{lang_pair}' chưa được hỗ trợ. Hỗ trợ: {', '.join(SUPPORTED_LANG_PAIRS.keys())}.",
         )
     source_lang, _target_lang = SUPPORTED_LANG_PAIRS[normalized_pair]
+    if layout_mode not in {"bubbles", "text_regions"}:
+        raise HTTPException(status_code=400, detail="layout_mode phải là bubbles hoặc text_regions.")
 
     idem_key = (idempotency_key or "").strip()
     if not idem_key or len(idem_key) > 128:
@@ -163,7 +166,8 @@ async def translate_comic_page(
         else:
             effective_direction = "rtl"
 
-    cache_image_hash = f"{image_hash}_{effective_direction}"
+    # Coverage v2 keeps text outside detected bubbles; don't replay incomplete old caches.
+    cache_image_hash = f"{image_hash}_{effective_direction}_coverage_v2_{layout_mode}"
 
     context_dict: dict[str, Any] = {}
     if context_json and context_json.strip():
@@ -186,8 +190,15 @@ async def translate_comic_page(
         )
         .first()
     )
-    if existing_idem and existing_idem.status == "completed" and existing_idem.response_json:
+    if (
+        existing_idem
+        and existing_idem.status == "completed"
+        and existing_idem.response_json
+        and json.loads(existing_idem.response_json).get("blocks")
+    ):
         saved_payload = json.loads(existing_idem.response_json)
+        saved_payload.setdefault("image_width", img_width)
+        saved_payload.setdefault("image_height", img_height)
         db.refresh(current_user)
         saved_payload["idempotent_replay"] = True
         saved_payload["reading_direction"] = effective_direction
@@ -214,7 +225,7 @@ async def translate_comic_page(
         if exp.tzinfo is None:
             from datetime import timezone
             exp = exp.replace(tzinfo=timezone.utc)
-        if exp >= now:
+        if exp >= now and json.loads(cache_row.blocks_json):
             cache_cost = max(0, int(settings.CACHE_HIT_COST))
             if cache_cost > 0:
                 ok_deduct, err_code, _info = deduct_credits_atomic(
@@ -233,6 +244,8 @@ async def translate_comic_page(
             cached_blocks = json.loads(cache_row.blocks_json)
             response_data = {
                 "blocks": cached_blocks,
+                "image_width": img_width,
+                "image_height": img_height,
                 "lang_pair": normalized_pair,
                 "reading_direction": effective_direction,
                 "cached": True,
@@ -296,7 +309,8 @@ async def translate_comic_page(
         used_multimodal = False
 
         # Ưu tiên: Pipeline Multimodal Vision (Libre Manga Translator) siêu nhẹ, bỏ qua OCR
-        if getattr(settings, "ENABLE_BUBBLE_DETECTOR", True) and settings.LLM_PROVIDER == "gemini" and settings.GEMINI_API_KEY:
+        # text_regions uses the OCR rectangle around the letters, not the outer speech bubble.
+        if layout_mode == "bubbles" and getattr(settings, "ENABLE_BUBBLE_DETECTOR", True) and settings.LLM_PROVIDER == "gemini" and settings.GEMINI_API_KEY:
             try:
                 from bubble_detector import get_bubble_detector
                 from translator import translate_page_multimodal_gemini
@@ -454,6 +468,8 @@ async def translate_comic_page(
     db.refresh(current_user)
     response_payload = {
         "blocks": translated_blocks,
+        "image_width": img_width,
+        "image_height": img_height,
         "lang_pair": normalized_pair,
         "reading_direction": effective_direction,
         "cached": False,

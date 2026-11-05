@@ -8,7 +8,17 @@ import pytest
 from PIL import Image
 import httpx
 
-from bubble_detector import containment_nms, filter_speckle, BubbleDetector
+from bubble_detector import containment_nms, filter_speckle, BubbleDetector, select_bubbles_and_uncovered_text
+
+
+def test_bubble_does_not_discard_other_dialogue_above_or_below():
+    bubble = [100, 400, 400, 700, .95]
+    inner_text = [150, 450, 350, 650, .90]
+    above = [50, 50, 200, 150, .90]
+    below = [100, 900, 350, 1000, .85]
+    result = select_bubbles_and_uncovered_text([bubble], [inner_text, above, below])
+    assert result == [bubble, above, below]
+    assert select_bubbles_and_uncovered_text([], [above, below]) == [above, below]
 from annotator import draw_numbered_bboxes
 from translator import translate_page_multimodal_gemini
 

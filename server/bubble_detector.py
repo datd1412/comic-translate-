@@ -94,6 +94,27 @@ def filter_speckle(
     return kept
 
 
+def select_bubbles_and_uncovered_text(
+    bubble_boxes: list[list[float]], text_boxes: list[list[float]]
+) -> list[list[float]]:
+    """Keep speech bubbles plus text regions outside them, without duplicate inner text."""
+    selected = list(bubble_boxes)
+    for text in text_boxes:
+        x1, y1, x2, y2 = text[:4]
+        area = max(1.0, (x2 - x1) * (y2 - y1))
+        covered = False
+        for bubble in bubble_boxes:
+            overlap = max(0.0, min(x2, bubble[2]) - max(x1, bubble[0])) * max(
+                0.0, min(y2, bubble[3]) - max(y1, bubble[1])
+            )
+            if overlap / area >= 0.5:
+                covered = True
+                break
+        if not covered:
+            selected.append(text)
+    return selected
+
+
 class BubbleDetector:
     """
     Bộ phát hiện bong bóng thoại Manga/Comic sử dụng RT-DETR-v2 INT8 ONNX (11 MB).
@@ -180,8 +201,8 @@ class BubbleDetector:
                 text_boxes.append(item)
 
         # Ưu tiên lấy bubble_boxes vì nó bao quát toàn bộ vùng trắng cần đè chữ
-        # Nếu trang không có bubble rõ rệt nhưng có text_free/text_bubble thì lấy text_boxes
-        target_boxes = bubble_boxes if bubble_boxes else text_boxes
+        # Giữ cả text_free/text_bubble ngoài bubble để không bỏ sót thoại trên/dưới.
+        target_boxes = select_bubbles_and_uncovered_text(bubble_boxes, text_boxes)
         if not target_boxes:
             return []
 

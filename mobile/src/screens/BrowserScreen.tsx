@@ -20,12 +20,14 @@ import {
   toggleShowOriginal,
   toggleReadingDirection,
   setLangPair,
+  setShowOriginal,
 } from '../store/settingsSlice';
 import { saveHistoryItem, saveBookmarkItem } from '../database/db';
 import {
   translatePageWithImageUrl,
   loginWithFirebaseToken,
   TranslatedBlock,
+  TranslateApiResponse,
 } from '../api/comicApi';
 import { MANGA_INJECTED_JS } from '../utils/injectedScript';
 import { sendLocalNotification } from '../utils/notifications';
@@ -41,6 +43,12 @@ export const BrowserScreen: React.FC = () => {
   const dispatch = useDispatch();
   const navigation = useNavigation<any>();
   const webViewRef = useRef<any>(null);
+  const documentGeneration = useRef(0);
+  const pendingRenders = useRef(new Map<string, {
+    resolve: () => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>());
 
   const { user, accessToken } = useSelector((state: RootState) => state.auth);
   const { serverUrl, showOriginal, langPair, readingDirection } = useSelector(
@@ -54,7 +62,20 @@ export const BrowserScreen: React.FC = () => {
   const [canGoForward, setCanGoForward] = useState(false);
   const [loading, setLoading] = useState(false);
   const [translating, setTranslating] = useState(false);
+  const [autoTranslateEnabled, setAutoTranslateEnabled] = useState(false);
+  const autoTranslateRef = useRef(false);
+  const [translatedImageCount, setTranslatedImageCount] = useState(0);
   const [translatedBlocks, setTranslatedBlocks] = useState<TranslatedBlock[]>([]);
+  const showOriginalRef = useRef(showOriginal);
+  useEffect(() => {
+    showOriginalRef.current = showOriginal;
+    webViewRef.current?.injectJavaScript(`window.__setTranslationOriginal?.(${showOriginal}); true;`);
+  }, [showOriginal]);
+  useEffect(() => {
+    autoTranslateRef.current = false;
+    setAutoTranslateEnabled(false);
+    webViewRef.current?.injectJavaScript('window.__setAutoTranslate?.(false); true;');
+  }, [langPair, readingDirection, serverUrl]);
 
   // Điều hướng đến URL mới
   const handleGoToUrl = () => {
@@ -80,16 +101,38 @@ export const BrowserScreen: React.FC = () => {
 
       if (data.type === 'PAGE_READY') {
         if (data.title) setPageTitle(data.title);
+      } else if (data.type === 'SHOW_TRANSLATION_DETAIL') {
+        Alert.alert('Bản dịch', `${data.translation || ''}\n\nBản gốc:\n${data.sourceText || ''}`);
+      } else if (data.type === 'TRANSLATION_RENDER_RESULT') {
+        const pending = pendingRenders.current.get(data.targetId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          pendingRenders.current.delete(data.targetId);
+          if (data.count > 0 && !data.showingOriginal) pending.resolve();
+          else pending.reject(new Error(data.message || 'Chưa hiển thị được khung dịch. Hãy thử tải lại trang truyện.'));
+        }
       } else if (data.type === 'ERROR') {
         setTranslating(false);
+        autoTranslateRef.current = false;
+        setAutoTranslateEnabled(false);
+        webViewRef.current?.injectJavaScript('window.__setAutoTranslate?.(false); true;');
         Alert.alert('Thông báo', data.message);
       } else if (data.type === 'TRANSLATE_PAGE_REQUEST') {
+        if (data.automatic && (!autoTranslateRef.current || !user || user.credits.total < 1)) {
+          autoTranslateRef.current = false;
+          setAutoTranslateEnabled(false);
+          webViewRef.current?.injectJavaScript(`window.__setAutoTranslate?.(false); window.__releaseTranslationTarget?.(${JSON.stringify(data.targetId)}, false); true;`);
+          if (user && user.credits.total < 1) Alert.alert('Hết Credit', 'Đã dừng dịch tự động vì hết credit.');
+          return;
+        }
         // NHẬN LINK ẢNH GỐC (imageUrl) VÀ TẢI BLOB GỬI BACKEND THẬT!
         await handleProcessTranslateRequest(
           data.imageUrl,
           data.refererOrigin,
           data.pageTitle || pageTitle,
-          data.pageUrl || currentUrl
+          data.pageUrl || currentUrl,
+          data.targetId,
+          Boolean(data.automatic)
         );
       }
     } catch {
@@ -102,8 +145,12 @@ export const BrowserScreen: React.FC = () => {
     imageUrl: string,
     refererOrigin: string,
     title: string,
-    url: string
+    url: string,
+    targetId: string,
+    automatic = false
   ) => {
+    const generation = documentGeneration.current;
+    let succeeded = false;
     try {
       setTranslating(true);
 
@@ -131,7 +178,7 @@ export const BrowserScreen: React.FC = () => {
         }
       }
 
-      let result: any;
+      let result: TranslateApiResponse;
       try {
         result = await translatePageWithImageUrl(serverUrl, tokenToUse || '', {
           imageUrl: imageUrl,
@@ -171,47 +218,78 @@ export const BrowserScreen: React.FC = () => {
       }
 
       if (result.blocks) {
-        setTranslatedBlocks(result.blocks);
-
         // Cập nhật số dư credit thật từ Database backend
         if (result.credits) {
           dispatch(updateUserCredits(result.credits));
         }
 
+        // A late response must not draw into a new document after navigation.
+        if (generation !== documentGeneration.current) return;
+        if (result.blocks.length > 0) setTranslatedBlocks(result.blocks);
+        // A new translation should be visible even if the previous page was in original mode.
+        showOriginalRef.current = false;
+        dispatch(setShowOriginal(false));
+        const rendered = result.blocks.length > 0 ? new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            pendingRenders.current.delete(targetId);
+            reject(new Error('WebView chưa xác nhận hiển thị bản dịch. Hãy reload app và trang truyện rồi thử lại.'));
+          }, 8000);
+          pendingRenders.current.set(targetId, {resolve, reject, timer});
+        }) : null;
+        const renderScript = `window.__renderRealTranslatedBlocks?.(${JSON.stringify(
+          result.blocks
+        )}, false, ${JSON.stringify({
+          image_width: result.image_width,
+          image_height: result.image_height,
+        })}, ${JSON.stringify(targetId)}); true;`;
+        webViewRef.current?.injectJavaScript(renderScript);
+        if (rendered) await rendered;
+        succeeded = true;
+        setTranslatedImageCount(count => count + 1);
+
         if (result.blocks.length === 0) {
-          Alert.alert(
+          if (!automatic) Alert.alert(
             'Không tìm thấy câu thoại',
             'AI không phát hiện thấy bong bóng thoại nào trên bức ảnh này (trang bìa hoặc hình minh họa). Bạn không bị trừ credit!'
           );
         } else {
-          // Ra lệnh cho WebView vẽ đè các khối thoại lên trang web
-          const renderScript = `window.__renderRealTranslatedBlocks(${JSON.stringify(
-            result.blocks
-          )}, ${showOriginal}); true;`;
-          webViewRef.current?.injectJavaScript(renderScript);
-
           // Lưu vào SQLite
           await saveHistoryItem(url, title, result.blocks.length);
 
           // Bắn thông báo Local Push Notification
-          await sendLocalNotification(
+          if (!automatic) await sendLocalNotification(
             '⚡ Dịch truyện thành công!',
             `AI đã nhận diện và dịch ${result.blocks.length} câu thoại. Số dư: ${result.credits?.total ?? 0} credit.`
           );
         }
       }
     } catch (error: any) {
+      if (automatic) {
+        autoTranslateRef.current = false;
+        setAutoTranslateEnabled(false);
+        webViewRef.current?.injectJavaScript('window.__setAutoTranslate?.(false); true;');
+      }
       Alert.alert(
-        'Lỗi từ Backend',
-        `${error.message}\n\nHãy kiểm tra kết nối tới Server PC (${serverUrl})`
+        'Không thể hoàn tất bản dịch',
+        `${error.message}`
       );
     } finally {
+      if (generation === documentGeneration.current) {
+        webViewRef.current?.injectJavaScript(`window.__releaseTranslationTarget?.(${JSON.stringify(targetId)}, ${succeeded}); true;`);
+      }
       setTranslating(false);
     }
   };
 
   // Nút bấm "Dịch trang này": WebView tìm link ảnh và gửi sang React Native
   const handleTriggerTranslate = () => {
+    if (autoTranslateRef.current) {
+      autoTranslateRef.current = false;
+      setAutoTranslateEnabled(false);
+      webViewRef.current?.injectJavaScript('window.__setAutoTranslate?.(false); true;');
+      return;
+    }
+    if (translating) return;
     if (!user) {
       Alert.alert(
         'Chưa đăng nhập',
@@ -236,23 +314,17 @@ export const BrowserScreen: React.FC = () => {
       return;
     }
 
-    setTranslating(true);
-    // Yêu cầu script trong WebView trích xuất imageUrl
+    autoTranslateRef.current = true;
+    setAutoTranslateEnabled(true);
+    // Dịch tuần tự ảnh gần màn hình; tiếp tục khi cuộn lên hoặc xuống.
     webViewRef.current?.injectJavaScript(
-      'window.__triggerTranslateActivePage(); true;'
+      `window.__setAutoTranslate?.(true, ${JSON.stringify(`${langPair}|${readingDirection}|${serverUrl}`)}); true;`
     );
   };
 
   // Xem ảnh gốc / Xem bản dịch
   const handleToggleOriginal = () => {
-    const nextState = !showOriginal;
     dispatch(toggleShowOriginal());
-    if (translatedBlocks.length > 0) {
-      const renderScript = `window.__renderRealTranslatedBlocks(${JSON.stringify(
-        translatedBlocks
-      )}, ${nextState}); true;`;
-      webViewRef.current?.injectJavaScript(renderScript);
-    }
   };
 
   // Đổi chiều đọc RTL / LTR
@@ -401,7 +473,14 @@ export const BrowserScreen: React.FC = () => {
             setCurrentUrl(navState.url);
             if (navState.title) setPageTitle(navState.title);
           }}
-          onLoadStart={() => setLoading(true)}
+          onLoadStart={() => {
+            documentGeneration.current += 1;
+            autoTranslateRef.current = false;
+            setAutoTranslateEnabled(false);
+            setTranslatedImageCount(0);
+            setTranslatedBlocks([]);
+            setLoading(true);
+          }}
           onLoadEnd={() => setLoading(false)}
           allowsBackForwardNavigationGestures
           javaScriptEnabled={true}
@@ -411,6 +490,11 @@ export const BrowserScreen: React.FC = () => {
 
         {/* Floating Action Buttons */}
         <View style={styles.fabContainer}>
+          {autoTranslateEnabled && (
+            <Text style={styles.autoTranslateHint}>
+              {translating ? 'Đang dịch ảnh…' : 'Cuộn để dịch tiếp'} · {translatedImageCount} ảnh · tính credit từng ảnh
+            </Text>
+          )}
           {translatedBlocks.length > 0 && (
             <TouchableOpacity
               style={[styles.fabSecondary, showOriginal && styles.fabActive]}
@@ -434,17 +518,17 @@ export const BrowserScreen: React.FC = () => {
           <TouchableOpacity
             style={[styles.fabPrimary, translating && styles.fabDisabled]}
             onPress={handleTriggerTranslate}
-            disabled={translating}
+            disabled={translating && !autoTranslateEnabled}
           >
             {translating ? (
               <>
                 <ActivityIndicator color="#FFFFFF" size="small" />
-                <Text style={styles.fabPrimaryText}>Đang dịch...</Text>
+                <Text style={styles.fabPrimaryText}>{autoTranslateEnabled ? 'Dừng tự dịch' : 'Đang dịch...'}</Text>
               </>
             ) : (
               <>
-                <Ionicons name="language-outline" size={20} color="#FFFFFF" />
-                <Text style={styles.fabPrimaryText}>Dịch trang</Text>
+                <Ionicons name={autoTranslateEnabled ? 'pause-outline' : 'language-outline'} size={20} color="#FFFFFF" />
+                <Text style={styles.fabPrimaryText}>{autoTranslateEnabled ? 'Dừng tự dịch' : 'Dịch khi cuộn'}</Text>
               </>
             )}
           </TouchableOpacity>
@@ -455,6 +539,14 @@ export const BrowserScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  autoTranslateHint: {
+    backgroundColor: '#FFFFFF',
+    color: '#334155',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    fontSize: 11,
+  },
   safeArea: {
     flex: 1,
     backgroundColor: '#FFFFFF',

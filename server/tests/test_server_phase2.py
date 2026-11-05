@@ -421,6 +421,74 @@ def test_payos_webhook_idempotency_and_signature_verification(test_env: dict[str
 # ==============================================================================
 # 5. Test Cache theo image_hash và Idempotency theo idempotency_key (cô lập giữa 2 user)
 # ==============================================================================
+@pytest.mark.parametrize("retry_key", ["empty_first", "empty_retry"])
+def test_empty_result_is_retried_after_ocr_outage(test_env: dict[str, Any], retry_key: str):
+    app = test_env["app"]
+    client = test_env["client"]
+    _, token = _create_user_with_credits(
+        test_env["SessionLocal"], "empty_retry@example.com", credits_one_time=10
+    )
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(200, json={"blocks": []})
+        raise httpx.ConnectError("OCR offline", request=request)
+
+    app.state.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    image = _make_sample_png_bytes((60, 70, 80))
+
+    def translate(key: str):
+        return client.post(
+            "/api/v1/page/translate",
+            headers={"Authorization": f"Bearer {token}"},
+            files={"image": ("page.png", image, "image/png")},
+            data={"lang_pair": "zh-vi", "idempotency_key": key},
+        )
+
+    first = translate("empty_first")
+    assert first.status_code == 200
+    assert first.json()["charged_credits"] == 0
+    assert translate(retry_key).status_code == 502
+    assert calls == 2
+
+
+def test_text_regions_replace_each_ocr_rectangle_without_bubble_detection(test_env, monkeypatch):
+    import bubble_detector
+    import translate_routes
+    from translator import parse_llm_translation_output
+
+    _, token = _create_user_with_credits(test_env["SessionLocal"], "rectangles@example.com", credits_one_time=10)
+    boxes = [[5, 5, 55, 20], [65, 25, 110, 40], [8, 50, 95, 70]]
+
+    def unexpected_detector():
+        pytest.fail("Text-region replacement must not use the outer speech bubble")
+
+    async def fake_ocr(**kwargs):
+        return {"blocks": [{"id": i, "bbox": box, "text": f"Source {i}"} for i, box in enumerate(boxes)]}
+
+    async def fake_translate(blocks, **kwargs):
+        output = json.dumps({"translations": [{"id": b["id"], "translation": f"Translation {b['id']}"} for b in blocks]})
+        return parse_llm_translation_output(output, blocks)
+
+    monkeypatch.setattr(bubble_detector, "get_bubble_detector", unexpected_detector)
+    monkeypatch.setattr(translate_routes, "call_ocr_service", fake_ocr)
+    monkeypatch.setattr(translate_routes, "translate_blocks_with_llm", fake_translate)
+    response = test_env["client"].post(
+        "/api/v1/page/translate",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"image": ("page.png", _make_sample_png_bytes(), "image/png")},
+        data={"lang_pair": "en-vi", "layout_mode": "text_regions", "idempotency_key": "rectangles"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert [b["bbox"] for b in payload["blocks"]] == boxes
+    assert [b["translation"] for b in payload["blocks"]] == ["Translation 0", "Translation 1", "Translation 2"]
+    assert (payload["image_width"], payload["image_height"]) == (120, 80)
+
+
 def test_image_hash_cache_and_idempotency_key_and_user_isolation(test_env: dict[str, Any]):
     app = test_env["app"]
     client: TestClient = test_env["client"]
@@ -466,6 +534,8 @@ def test_image_hash_cache_and_idempotency_key_and_user_isolation(test_env: dict[
     )
     assert r1.status_code == 200
     assert r1.json()["cached"] is False
+    assert (r1.json()["image_width"], r1.json()["image_height"]) == (120, 80)
+    assert r1.json()["blocks"][0]["bbox"] == [1, 2, 30, 40]
     assert r1.json()["credits"]["total"] == 8
     assert call_counter == {"ocr": 1, "llm": 1}
 
@@ -478,6 +548,7 @@ def test_image_hash_cache_and_idempotency_key_and_user_isolation(test_env: dict[
     )
     assert r2.status_code == 200
     assert r2.json()["idempotent_replay"] is True
+    assert (r2.json()["image_width"], r2.json()["image_height"]) == (120, 80)
     assert r2.json()["credits"]["total"] == 8
     assert call_counter == {"ocr": 1, "llm": 1}
 
@@ -490,6 +561,7 @@ def test_image_hash_cache_and_idempotency_key_and_user_isolation(test_env: dict[
     )
     assert r3.status_code == 200
     assert r3.json()["cached"] is True
+    assert (r3.json()["image_width"], r3.json()["image_height"]) == (120, 80)
     assert r3.json()["credits"]["total"] == 8
     assert call_counter == {"ocr": 1, "llm": 1}
 
