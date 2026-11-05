@@ -285,8 +285,8 @@ async def translate_blocks_with_llm(
             },
         }
         resp = await client.post(gemini_url, json=payload, headers=headers)
-        if resp.status_code == 404:
-            # Dự phòng: Nếu model cấu hình bị Google khai tử trên API v1beta, tự động fallback
+        if resp.status_code in (404, 503):
+            # Dự phòng: Nếu model cấu hình bị Google khai tử (404) hoặc quá tải (503), tự động fallback
             for fallback_model in ["gemini-3.1-flash-lite", "gemini-3-flash-preview", "gemini-flash-lite-latest", "gemini-3.8-flash"]:
                 if fallback_model == model_name:
                     continue
@@ -374,27 +374,18 @@ async def translate_page_multimodal_gemini(
     dir_desc = "từ Phải sang Trái (RTL)" if reading_direction.lower() == "rtl" else "từ Trái sang Phải (LTR)"
 
     system_prompt = (
-        f"You are an expert manga/comic translator. BE MORE NATURAL. You translate {source_lang_name} into fluent, lively, colloquial VIETNAMESE as understood by native comic readers.\n"
-        f"- Series Title: {series_title}\n"
-        f"- Genre / Tone: Romance, School Life, Comedy, Slice of Life (Thanh xuân vườn trường, lãng mạn đời thường). Use natural teenage pronouns: cậu/tớ, anh/em, mình.\n"
+        f"Bạn là dịch giả truyện tranh Việt Nam xuất sắc, chuyển ngữ từ {source_lang_name} sang tiếng Việt sống động, mượt mà và tự nhiên.\n"
+        f"- Tên bộ truyện: {series_title}\n"
         f"{custom_ctx_str}"
         f"- Bảng thuật ngữ / xưng hô: {glossary_str}\n"
-        f"- CÁC CÂU THOẠI TRANG TRƯỚC (RẤT QUAN TRỌNG ĐỂ KẾ THỪA MẠCH TRUYỆN & XƯNG HÔ):\n{prev_str}\n\n"
+        f"- CÁC CÂU THOẠI TRANG TRƯỚC (KẾ THỪA MẠCH TRUYỆN & XƯNG HÔ):\n{prev_str}\n\n"
         f"THỨ TỰ ĐỌC: Các ô thoại đã được đánh số đỏ [1], [2], ... theo thứ tự đọc {dir_desc}.\n\n"
-        "QUY TẮC DỊCH BẮT BUỘC:\n"
-        "1. KHẨU NGỮ TỰ NHIÊN & THOÁT Ý (BE MORE NATURAL):\n"
-        "   - Tuyệt đối không dịch máy thô kệch từng từ (word-by-word).\n"
-        "   - Cụm từ thán từ '不愧是男孩子' PHẢI dịch là 'Đúng là con trai có khác!' hoặc 'Quả không hổ là con trai!', TUYỆT ĐỐI KHÔNG dịch thành 'có một con trai khác'.\n"
-        "   - Cụm từ '急匆匆' = vội vã / hối hả / vội vàng, TUYỆT ĐỐI KHÔNG dịch thành 'ngựa vàng'.\n"
-        "   - Từ '刮鬍刀' = dao cạo râu (hoặc dao cạo).\n"
-        "2. PHÂN BIỆT TỪ ĐA NGHĨA TRONG NGỮ CẢNH TRUYỆN TRANH:\n"
-        "   - '鬍' / '鬍子' = râu (không phải đài hoa hay cây cỏ).\n"
-        "   - '長鬍子' / '會長鬍子' = mọc râu / sẽ mọc râu (ở đây '會長' là động từ 'sẽ mọc', KHÔNG PHẢI danh từ 'hội trưởng').\n"
-        "   - '不會長那麼長' = không mọc dài đến thế đâu (chữ '長' ở đây là dài/mọc, KHÔNG PHẢI sống thọ hay sống lâu).\n"
-        "3. TÊN RIÊNG PHƯƠNG TÂY: Khôi phục tên gốc Latin (Amelia, Wolfgang, Mozart, London...).\n"
-        "4. BỎ QUA HOÀN TOÀN chữ nằm ngoài ô đỏ (chữ in trên áo thun 'NUMBER GIRL', logo mép tranh, watermark).\n"
-        f"5. Mảng 'translations' BẮT BUỘC có ĐÚNG {count} phần tử theo thứ tự Box 1..{count}.\n"
-        f"6. Mảng 'sourceTexts' BẮT BUỘC có ĐÚNG {count} phần tử chứa chữ gốc bạn nhìn thấy trong từng ô đỏ.\n\n"
+        "QUY TẮC BẮT BUỘC:\n"
+        "1. Dịch chuẩn xác nội dung trong các ô đỏ có số thứ tự [1], [2], ... sang tiếng Việt tự nhiên, phù hợp bối cảnh nhân vật.\n"
+        "2. Khôi phục tên riêng phương Tây (Amelia, Wolfgang, Mozart,...) thay vì âm Hán-Việt thô kệch.\n"
+        "3. TUYỆT ĐỐI BỎ QUA bất kỳ chữ nào nằm ngoài ô đỏ (chữ in trên áo thun, logo mép tranh, watermark).\n"
+        f"4. Mảng 'translations' BẮT BUỘC có ĐÚNG {count} phần tử, đúng thứ tự từ Box 1 đến Box {count}.\n"
+        f"5. Mảng 'sourceTexts' BẮT BUỘC có ĐÚNG {count} phần tử, chứa chữ gốc bạn nhìn thấy trong từng ô đỏ.\n\n"
         "CHỈ TRẢ VỀ DUY NHẤT MỘT JSON OBJECT theo mẫu:\n"
         "{\n"
         '  "translations": ["câu dịch cho box 1", "câu dịch cho box 2"],\n'
@@ -444,8 +435,8 @@ async def translate_page_multimodal_gemini(
     client = http_client or httpx.AsyncClient(timeout=settings.LLM_TIMEOUT_SECONDS)
     try:
         resp = await client.post(gemini_url, json=payload, headers=headers)
-        if resp.status_code == 404:
-            # Fallback nếu model bị 404
+        if resp.status_code in (404, 503):
+            # Fallback nếu model bị 404 hoặc 503
             for fallback_model in ["gemini-3.1-flash-lite", "gemini-3-flash-preview", "gemini-flash-lite-latest", "gemini-3.8-flash"]:
                 if fallback_model == model_name:
                     continue

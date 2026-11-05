@@ -80,36 +80,60 @@ function injectStyles(): void {
       right: 18px;
       z-index: 2147483640;
       display: flex;
-      gap: 8px;
+      gap: 6px;
       align-items: center;
-      background: rgba(15, 23, 42, 0.94);
-      color: #f8fafc;
-      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.96);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      color: #0f172a;
+      padding: 6px 10px;
       border-radius: 999px;
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
       font-family: ${VIETNAMESE_FONT_FAMILY};
       font-size: 12px;
-      border: 1px solid rgba(255, 255, 255, 0.16);
+      border: 1px solid #e2e8f0;
+    }
+
+    #ctvn-floating-toolbar span[data-testid="ctvn-site-label"] {
+      font-weight: 700;
+      color: #0f172a;
+      padding: 0 6px 0 4px;
     }
 
     #ctvn-floating-toolbar button {
-      background: #ea580c;
+      background: #f97316;
       color: #ffffff;
       border: none;
       border-radius: 999px;
-      padding: 5px 10px;
+      padding: 6px 12px;
       font-size: 12px;
       font-weight: 600;
       cursor: pointer;
       font-family: ${VIETNAMESE_FONT_FAMILY};
+      box-shadow: 0 1px 3px rgba(249, 115, 22, 0.25);
+      transition: all 0.15s ease;
+    }
+
+    #ctvn-floating-toolbar button:hover {
+      background: #ea580c;
     }
 
     #ctvn-floating-toolbar button.ctvn-secondary {
-      background: #334155;
+      background: #f1f5f9;
+      color: #334155;
+      border: 1px solid #e2e8f0;
+      box-shadow: none;
+    }
+
+    #ctvn-floating-toolbar button.ctvn-secondary:hover {
+      background: #e2e8f0;
+      color: #0f172a;
     }
 
     #ctvn-floating-toolbar button.ctvn-active {
       background: #16a34a;
+      color: #ffffff;
+      box-shadow: 0 1px 3px rgba(22, 163, 74, 0.25);
     }
 
     #ctvn-context-drawer {
@@ -119,56 +143,72 @@ function injectStyles(): void {
       z-index: 2147483640;
       width: 340px;
       display: none;
-      background: rgba(15, 23, 42, 0.96);
-      color: #f8fafc;
-      padding: 12px;
-      border-radius: 14px;
-      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+      background: #ffffff;
+      color: #0f172a;
+      padding: 14px;
+      border-radius: 16px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
       font-family: ${VIETNAMESE_FONT_FAMILY};
       font-size: 12px;
-      border: 1px solid rgba(255, 255, 255, 0.18);
+      border: 1px solid #e2e8f0;
     }
 
     #ctvn-context-drawer.ctvn-open {
       display: block;
     }
 
+    #ctvn-context-counter {
+      color: #94a3b8;
+      font-size: 11px;
+    }
+
     .ctvn-preset-chips {
       display: flex;
       flex-wrap: wrap;
-      gap: 5px;
-      margin: 6px 0 8px 0;
+      gap: 6px;
+      margin: 8px 0 8px 0;
     }
 
     .ctvn-preset-chip {
-      background: #1e293b;
-      color: #fdba74;
-      border: 1px solid #475569;
+      background: #fff7ed;
+      color: #c2410c;
+      border: 1px solid #fed7aa;
       border-radius: 999px;
-      padding: 3px 8px;
+      padding: 4px 10px;
       font-size: 11px;
       font-weight: 600;
       cursor: pointer;
       font-family: ${VIETNAMESE_FONT_FAMILY};
+      transition: all 0.15s ease;
     }
 
     .ctvn-preset-chip:hover {
-      background: #334155;
+      background: #ffedd5;
+      border-color: #fdba74;
+      color: #9a3412;
     }
 
     #ctvn-context-textarea {
       width: 100%;
       box-sizing: border-box;
-      min-height: 68px;
+      min-height: 72px;
       resize: vertical;
-      border-radius: 8px;
-      border: 1px solid #475569;
-      background: #0f172a;
-      color: #f8fafc;
-      padding: 7px 8px;
+      border-radius: 10px;
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+      color: #0f172a;
+      padding: 8px 10px;
       font-size: 12px;
-      line-height: 1.4;
+      line-height: 1.5;
       font-family: ${VIETNAMESE_FONT_FAMILY};
+      transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+    }
+
+    #ctvn-context-textarea:focus {
+      background: #ffffff;
+      border-color: #f97316;
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.14);
     }
 
     .ctvn-image-stage {
@@ -208,16 +248,16 @@ function injectStyles(): void {
       display: none;
       align-items: center;
       gap: 6px;
-      background: rgba(15, 23, 42, 0.88);
-      color: #f8fafc;
-      border: 1px solid rgba(251, 146, 60, 0.65);
+      background: rgba(255, 255, 255, 0.95);
+      color: #0f172a;
+      border: 1px solid #fed7aa;
       border-radius: 999px;
       padding: 4px 10px;
       font-size: 11px;
       font-weight: 600;
       font-family: ${VIETNAMESE_FONT_FAMILY};
       pointer-events: none;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     }
 
     .ctvn-image-stage[data-ctvn-status="translating"] .ctvn-loading-indicator {
@@ -227,28 +267,39 @@ function injectStyles(): void {
     .ctvn-spinner-dot {
       width: 10px;
       height: 10px;
-      border: 2px solid rgba(251, 146, 60, 0.35);
-      border-top-color: #fb923c;
+      border: 2px solid rgba(249, 115, 22, 0.3);
+      border-top-color: #f97316;
       border-radius: 50%;
       animation: ctvn-spin 0.75s linear infinite;
     }
 
     .ctvn-btn {
-      background: rgba(234, 88, 12, 0.95);
+      background: #f97316;
       color: #ffffff;
-      border: 1px solid rgba(255, 255, 255, 0.25);
-      border-radius: 8px;
-      padding: 5px 10px;
+      border: none;
+      border-radius: 10px;
+      padding: 6px 12px;
       font-size: 12px;
       font-weight: 600;
       cursor: pointer;
       font-family: ${VIETNAMESE_FONT_FAMILY};
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      transition: background 0.15s ease;
+    }
+
+    .ctvn-btn:hover {
+      background: #ea580c;
     }
 
     .ctvn-btn.ctvn-btn-toggle {
-      background: rgba(15, 23, 42, 0.9);
+      background: #ffffff;
+      color: #1e293b;
+      border: 1px solid #e2e8f0;
       display: none;
+    }
+
+    .ctvn-btn.ctvn-btn-toggle:hover {
+      background: #f8fafc;
     }
 
     .ctvn-overlay-layer {
@@ -408,12 +459,12 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
   toolbar.innerHTML = `
     <span data-testid="ctvn-site-label">${adapter.displayName}</span>
     <button type="button" id="ctvn-btn-reading-direction" class="ctvn-secondary" data-testid="ctvn-btn-reading-direction">${
-      readingDirection === "rtl" ? "[ 📖 Manga (RTL) ]" : "[ 📜 Manhwa (LTR) ]"
+      readingDirection === "rtl" ? "Manga (RTL)" : "Manhwa (LTR)"
     }</button>
-    <button type="button" id="ctvn-btn-auto-scroll" data-testid="ctvn-btn-auto-scroll">Dịch toàn bộ khi cuộn</button>
+    <button type="button" id="ctvn-btn-auto-scroll" data-testid="ctvn-btn-auto-scroll">Dịch toàn bộ</button>
     <button type="button" id="ctvn-btn-toggle-all" class="ctvn-secondary" data-testid="ctvn-btn-toggle-all">Xem bản gốc / Bản dịch</button>
-    <button type="button" id="ctvn-btn-context-toggle" class="ctvn-secondary" data-testid="ctvn-btn-context-toggle">Ngữ cảnh truyện</button>
-    <button type="button" id="ctvn-btn-debug-selector" class="ctvn-secondary" data-testid="ctvn-btn-debug-selector">Debug Selector</button>
+    <button type="button" id="ctvn-btn-context-toggle" class="ctvn-secondary" data-testid="ctvn-btn-context-toggle">Ngữ cảnh</button>
+    <button type="button" id="ctvn-btn-debug-selector" class="ctvn-secondary" data-testid="ctvn-btn-debug-selector">Bộ chọn gỡ lỗi</button>
   `;
   document.body.appendChild(toolbar);
 
@@ -436,7 +487,7 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
   function updateReadingDirectionBtnUI(): void {
     if (readingDirectionBtn) {
       readingDirectionBtn.textContent =
-        readingDirection === "rtl" ? "[ 📖 Manga (RTL) ]" : "[ 📜 Manhwa (LTR) ]";
+        readingDirection === "rtl" ? "Manga (RTL)" : "Manhwa (LTR)";
       readingDirectionBtn.title =
         readingDirection === "rtl"
           ? "Hướng đọc: Phải sang Trái (Manga Nhật / Manhua). Click để đổi."
@@ -995,8 +1046,8 @@ function initComicTranslatorOnPage(adapter: SiteAdapter): void {
     autoScrollEnabled = !autoScrollEnabled;
     autoScrollBtn.classList.toggle("ctvn-active", autoScrollEnabled);
     autoScrollBtn.textContent = autoScrollEnabled
-      ? "Đang dịch tự động khi cuộn"
-      : "Dịch toàn bộ khi cuộn";
+      ? "Đang tự động dịch"
+      : "Dịch toàn bộ";
     if (autoScrollEnabled) {
       enqueueVisibleViewportImagesOnly();
     }

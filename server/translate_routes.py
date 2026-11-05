@@ -326,13 +326,17 @@ async def translate_comic_page(
 
         # Fallback về OCR truyền thống (PaddleOCR) nếu không chạy multimodal hoặc trang không có bóng thoại
         if not used_multimodal:
-            ocr_result = await call_ocr_service(
-                image_bytes=raw_bytes,
-                filename=image.filename or "page.png",
-                content_type=image.content_type or "image/png",
-                source_lang=source_lang,
-                http_client=http_client,
-            )
+            try:
+                ocr_result = await call_ocr_service(
+                    image_bytes=raw_bytes,
+                    filename=image.filename or "page.png",
+                    content_type=image.content_type or "image/png",
+                    source_lang=source_lang,
+                    http_client=http_client,
+                )
+            except (httpx.ConnectError, httpx.HTTPError, HTTPException) as ocr_err:
+                print(f"[INFO] OCR service offline, continuing standalone: {ocr_err}")
+                ocr_result = {"blocks": []}
             ocr_blocks = ocr_result.get("blocks") or []
 
             if ocr_blocks:
@@ -420,7 +424,19 @@ async def translate_comic_page(
             detail="Lỗi hệ thống khi dịch trang. Đã hoàn lại credit.",
         ) from exc
 
-    # 7. Lưu Cache (chỉ văn bản) và Idempotency record
+    # 7. Nếu không tìm thấy câu thoại nào, hoàn trả credit cho người dùng
+    actual_cost = cost
+    if not translated_blocks:
+        actual_cost = 0
+        refund_credits_atomic(
+            db=db,
+            user_id=current_user.id,
+            sub_deducted=sub_deducted,
+            one_time_deducted=one_time_deducted,
+            note=f"Refund because no speech bubbles found (key={idem_key})",
+        )
+
+    # 8. Lưu Cache (chỉ văn bản) và Idempotency record
     expires_at = utcnow() + timedelta(seconds=settings.TRANSLATE_CACHE_TTL_SECONDS)
     new_cache = TranslationCache(
         user_id=current_user.id,
@@ -438,7 +454,7 @@ async def translate_comic_page(
         "reading_direction": effective_direction,
         "cached": False,
         "idempotent_replay": False,
-        "charged_credits": cost,
+        "charged_credits": actual_cost,
         "credits": {
             "subscription": int(current_user.credits_subscription or 0),
             "one_time": int(current_user.credits_one_time or 0),

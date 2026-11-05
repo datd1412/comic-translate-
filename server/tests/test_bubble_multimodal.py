@@ -101,3 +101,4 @@ async def test_multimodal_self_healing_validator():
     assert results[0]["id"] == 0
     assert results[1]["id"] == 1
     assert results[2]["id"] == 2
+

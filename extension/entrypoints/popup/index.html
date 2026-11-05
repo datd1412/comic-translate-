@@ -9,100 +9,225 @@
       width: 350px;
       margin: 0;
       padding: 14px;
-      font-family: 'Be Vietnam Pro', 'Noto Sans', system-ui, -apple-system, sans-serif;
-      background: #0f172a;
-      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #f8fafc;
+      color: #0f172a;
       font-size: 13px;
+      line-height: 1.5;
+      box-sizing: border-box;
+      letter-spacing: -0.01em;
     }
     h1 {
-      font-size: 16px;
-      margin: 0 0 8px 0;
-      color: #fb923c;
+      font-size: 17px;
+      font-weight: 800;
+      margin: 0 0 12px 2px;
+      color: #0f172a;
+      letter-spacing: -0.02em;
     }
     .card {
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 10px;
-      padding: 10px;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      padding: 12px 14px;
       margin-bottom: 10px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03), 0 1px 2px rgba(0, 0, 0, 0.02);
     }
     .unsupported-banner {
       display: none;
-      background: #7f1d1d;
-      border: 1px solid #ef4444;
-      color: #fef2f2;
-      border-radius: 8px;
-      padding: 8px 10px;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #991b1b;
+      border-radius: 14px;
+      padding: 12px 14px;
       margin-bottom: 10px;
       font-weight: 600;
+      font-size: 13px;
+      box-shadow: 0 1px 3px rgba(239, 68, 68, 0.06);
+    }
+    .unsupported-banner .btn {
+      background: #ef4444;
+      color: #ffffff;
+      border: none;
+      margin-top: 8px;
+    }
+    .unsupported-banner .btn:hover {
+      background: #dc2626;
     }
     .btn {
       width: 100%;
-      padding: 8px 10px;
+      padding: 10px 14px;
       border: none;
-      border-radius: 8px;
-      font-weight: 600;
+      border-radius: 12px;
+      font-weight: 700;
       cursor: pointer;
-      margin-top: 6px;
-      font-size: 12px;
+      margin-top: 8px;
+      font-size: 13px;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      font-family: inherit;
     }
     .btn-primary {
-      background: #ea580c;
+      background: #f97316;
       color: #ffffff;
+      box-shadow: 0 2px 5px rgba(249, 115, 22, 0.28);
+    }
+    .btn-primary:hover {
+      background: #ea580c;
+      box-shadow: 0 3px 8px rgba(234, 88, 12, 0.32);
+    }
+    .btn-primary:active {
+      transform: scale(0.99);
     }
     .btn-secondary {
-      background: #334155;
-      color: #f8fafc;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      color: #334155;
+    }
+    .btn-secondary:hover {
+      background: #f1f5f9;
+      border-color: #cbd5e1;
+      color: #0f172a;
+    }
+    .btn-secondary:active {
+      background: #e2e8f0;
     }
     .row {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin: 4px 0;
+      margin: 6px 0;
+      font-size: 13px;
+      color: #1e293b;
+      font-weight: 500;
+    }
+    .row strong {
+      color: #0f172a;
+      font-weight: 700;
+    }
+    input[type="checkbox"] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 44px;
+      height: 24px;
+      background: #e2e8f0;
+      border-radius: 999px;
+      position: relative;
+      outline: none;
+      cursor: pointer;
+      transition: background 0.2s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.2s ease;
+      margin: 0;
+      flex-shrink: 0;
+      border: 1px solid #cbd5e1;
+    }
+    input[type="checkbox"]::before {
+      content: "";
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      top: 2px;
+      left: 2px;
+      background: #ffffff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+      transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    input[type="checkbox"]:checked {
+      background: #f97316;
+      border-color: #ea580c;
+    }
+    input[type="checkbox"]:checked::before {
+      transform: translateX(20px);
     }
     input[type="text"],
     textarea {
       width: 100%;
       box-sizing: border-box;
-      padding: 6px 8px;
-      border-radius: 6px;
-      border: 1px solid #475569;
-      background: #0f172a;
-      color: #f8fafc;
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+      color: #0f172a;
       font-size: 12px;
-      margin-top: 4px;
+      margin-top: 6px;
       font-family: inherit;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+    }
+    input[type="text"]::placeholder,
+    textarea::placeholder {
+      color: #94a3b8;
+    }
+    input[type="text"]:focus,
+    textarea:focus {
+      background: #ffffff;
+      border-color: #f97316;
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.14);
     }
     textarea {
-      min-height: 68px;
+      min-height: 72px;
       resize: vertical;
-      line-height: 1.4;
+      line-height: 1.5;
     }
     .preset-chips {
       display: flex;
       flex-wrap: wrap;
-      gap: 4px;
-      margin: 6px 0 4px 0;
+      gap: 6px;
+      margin: 8px 0 6px 0;
     }
     .preset-chip {
-      background: #0f172a;
-      color: #fdba74;
-      border: 1px solid #475569;
+      background: #fff7ed;
+      color: #c2410c;
+      border: 1px solid #fed7aa;
       border-radius: 999px;
-      padding: 3px 8px;
+      padding: 4px 10px;
       font-size: 11px;
       font-weight: 600;
       cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: inherit;
     }
     .preset-chip:hover {
-      background: #334155;
+      background: #ffedd5;
+      border-color: #fdba74;
+      color: #9a3412;
+      transform: translateY(-1px);
+    }
+    .preset-chip:active {
+      transform: translateY(0);
     }
     .badge {
-      background: #065f46;
-      color: #a7f3d0;
-      padding: 2px 6px;
+      background: #ecfdf5;
+      color: #047857;
+      border: 1px solid #a7f3d0;
+      padding: 3px 8px;
       border-radius: 999px;
       font-size: 11px;
+      font-weight: 600;
+    }
+    #credit-summary {
+      margin-top: 8px;
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      border-radius: 12px;
+      padding: 9px 12px;
+      color: #9a3412;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    #credit-summary strong {
+      color: #ea580c;
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .support-list {
+      margin: 8px 0 0 18px;
+      padding: 0;
+      font-size: 12px;
+      color: #64748b;
+      line-height: 1.6;
     }
   </style>
 </head>
@@ -154,7 +279,7 @@
       <strong>Tài khoản &amp; Credit</strong>
       <span id="auth-status-badge" class="badge">Chưa đăng nhập</span>
     </div>
-    <div id="credit-summary" data-testid="credit-summary" style="margin-top: 6px;">
+    <div id="credit-summary" data-testid="credit-summary">
       Tổng Credit: <strong id="credit-total">0</strong>
       (Gói: <span id="credit-sub">0</span> | Lẻ: <span id="credit-onetime">0</span>)
     </div>
@@ -168,7 +293,7 @@
 
   <div class="card">
     <strong>Trang hỗ trợ chính thức</strong>
-    <ul style="margin: 6px 0 0 18px; padding: 0; font-size: 12px; color: #cbd5e1;">
+    <ul class="support-list">
       <li>baozimh.org (Trung -&gt; Việt)</li>
       <li>hivetoons.org (Anh -&gt; Việt)</li>
     </ul>

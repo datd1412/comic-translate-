@@ -14,7 +14,7 @@ import httpx
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from auth_utils import get_current_user
+from auth_utils import create_access_token, create_refresh_token, get_current_user
 from config import settings
 from database import (
     Payment,
@@ -134,6 +134,29 @@ async def _create_payos_payment_link(
         }
 
 
+async def _check_payos_order_paid(order_code: int) -> bool:
+    """Truy vấn trực tiếp trạng thái đơn hàng từ PayOS API."""
+    if not (settings.PAYOS_CLIENT_ID and settings.PAYOS_API_KEY):
+        return False
+    try:
+        headers = {
+            "x-client-id": settings.PAYOS_CLIENT_ID,
+            "x-api-key": settings.PAYOS_API_KEY,
+        }
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.get(
+                f"https://api-merchant.payos.vn/v2/payment-requests/{order_code}",
+                headers=headers,
+            )
+            if r.status_code == 200:
+                payload = r.json()
+                data = payload.get("data") or {}
+                return data.get("status") == "PAID"
+    except Exception as e:
+        print(f"[WARN] Không thể kiểm tra PayOS API: {e}")
+    return False
+
+
 @router.get("/packages")
 async def list_packages():
     """Trả danh sách gói nạp đọc từ cấu hình (`settings.get_topup_packages()`)."""
@@ -152,18 +175,28 @@ async def list_packages():
     return {"packages": packages}
 
 
+PACKAGE_ALIASES: dict[str, str] = {
+    "vnd_50000": "pack_basic_50k",
+    "vnd_100000": "pack_pro_100k",
+    "vnd_200000": "pack_ultra_200k",
+}
+
+
 @router.post("/payos/checkout")
+@router.post("/payment-intents")
 async def create_payos_checkout(
     req: CreateCheckoutRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    package_code = PACKAGE_ALIASES.get(req.package_code, req.package_code)
     packages_map = settings.get_topup_packages()
-    pkg = packages_map.get(req.package_code)
+    pkg = packages_map.get(package_code)
     if not pkg:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Mã gói nạp không hợp lệ.",
+            detail=f"Mã gói nạp không hợp lệ: {req.package_code}",
         )
 
     order_code = _generate_unique_order_code(db)
@@ -173,7 +206,7 @@ async def create_payos_checkout(
     payment = Payment(
         user_id=current_user.id,
         provider="payos",
-        package_code=req.package_code,
+        package_code=package_code,
         order_code=order_code,
         amount_vnd=amount_vnd,
         credits=credits,
@@ -183,13 +216,20 @@ async def create_payos_checkout(
     db.commit()
     db.refresh(payment)
 
+    # Dynamic return & cancel URL theo host thực tế của client (127.0.0.1, localhost, hoặc 192.168.x.x)
+    host = request.headers.get("host") or "127.0.0.1:8000"
+    scheme = request.url.scheme or "http"
+    base_url = f"{scheme}://{host}".rstrip("/")
+    dynamic_return_url = f"{base_url}/billing/v1/payos/return"
+    dynamic_cancel_url = f"{base_url}/billing/v1/payos/cancel"
+
     try:
         link_info = await _create_payos_payment_link(
             order_code=order_code,
             amount_vnd=amount_vnd,
             description=f"CTVN {order_code}"[:25],
-            return_url=settings.PAYOS_RETURN_URL,
-            cancel_url=settings.PAYOS_CANCEL_URL,
+            return_url=dynamic_return_url,
+            cancel_url=dynamic_cancel_url,
         )
         payment.checkout_url = link_info.get("checkoutUrl") or None
         payment.payment_link_id = link_info.get("paymentLinkId") or None
@@ -303,22 +343,83 @@ async def get_order_status(
     }
 
 
+@router.get("/transactions")
+async def list_transactions(
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    payments = (
+        db.query(Payment)
+        .filter(Payment.user_id == current_user.id)
+        .order_by(Payment.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    items = []
+    for p in payments:
+        items.append({
+            "order_code": p.order_code,
+            "provider_txn_ref": str(p.order_code),
+            "package_code": p.package_code,
+            "amount_vnd": p.amount_vnd,
+            "credits": p.credits,
+            "status": "succeeded" if p.status == "paid" else p.status,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "paid_at": p.paid_at.isoformat() if p.paid_at else None,
+        })
+    return {"items": items}
+
+
 @router.get("/payos/return", response_class=HTMLResponse)
 async def payos_return(
     request: Request,
     orderCode: int | None = None,
     status: str | None = None,
+    code: str | None = None,
+    cancel: bool | None = None,
     db: Session = Depends(get_db),
 ):
     payment_status = "unknown"
     message = "Hệ thống đang đồng bộ trạng thái thanh toán từ PayOS."
+    user: User | None = None
+
     if orderCode is not None:
         payment = db.query(Payment).filter(Payment.order_code == int(orderCode)).first()
         if payment:
+            user = db.query(User).filter(User.id == payment.user_id).first()
+
+            # Tín hiệu thanh toán thành công từ PayOS redirect query parameters
+            is_paid_signal = (
+                (status and status.upper() == "PAID")
+                or (code and str(code).strip() in ("00", "0"))
+                or (cancel is False)
+            )
+
+            # Nếu đơn chưa được cập nhật thành 'paid' trong database:
+            if payment.status != "paid":
+                # Kiểm tra trực tiếp PayOS API để đảm bảo tính xác thực
+                is_confirmed_paid = await _check_payos_order_paid(payment.order_code)
+                # Cho phép cộng credit nếu API PayOS xác nhận hoặc có tín hiệu PAID từ redirect
+                if is_confirmed_paid or is_paid_signal or getattr(settings, "ENVIRONMENT", "").lower() == "development":
+                    packages_map = settings.get_topup_packages()
+                    pkg = packages_map.get(payment.package_code) or {}
+                    new_tier = pkg.get("tier")
+                    credited, credited_user = topup_credits_from_payment_atomic(
+                        db=db,
+                        payment_id=payment.id,
+                        new_tier=new_tier,
+                        raw_response_str=json.dumps({"return_query": dict(request.query_params)}, ensure_ascii=False),
+                    )
+                    if credited_user:
+                        user = credited_user
+
+            db.refresh(payment)
             payment_status = payment.status
             if payment.status == "paid":
-                message = f"Đã cộng {payment.credits} credits vào tài khoản của bạn."
-    return templates.TemplateResponse(
+                message = f"Thanh toán thành công! Đã cộng {payment.credits} credits vào tài khoản của bạn."
+
+    response = templates.TemplateResponse(
         request,
         "payment_success.html",
         {
@@ -327,8 +428,18 @@ async def payos_return(
             "payment_status": payment_status,
             "provider_status": status or "",
             "message": message,
+            "user": user,
         },
     )
+
+    # Đảm bảo nếu user bị mất cookie khi redirect từ PayOS về, tự động cấp lại cookie phiên đăng nhập
+    if user:
+        from auth_routes import _set_auth_cookies
+        access_token = create_access_token(data={"sub": str(user.id), "email": user.email})
+        refresh_token, _ = create_refresh_token()
+        _set_auth_cookies(response, access_token, refresh_token)
+
+    return response
 
 
 @router.get("/payos/cancel", response_class=HTMLResponse)

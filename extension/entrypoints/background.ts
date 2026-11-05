@@ -161,7 +161,7 @@ async function fetchImageBlobInBackground(
 }
 
 /**
- * Tự động gọi `/auth/v1/token` bằng `refresh_token` khi access token hết hạn (HTTP 401).
+ * Tự động gọi `/auth/v1/refresh` bằng `refresh_token` khi access token hết hạn (HTTP 401).
  */
 async function refreshAccessTokenIfPossible(
   serverUrl: string,
@@ -170,7 +170,7 @@ async function refreshAccessTokenIfPossible(
   if (!refreshToken) {
     return null;
   }
-  const resp = await fetch(`${serverUrl.replace(/\/$/, "")}/auth/v1/token`, {
+  const resp = await fetch(`${serverUrl.replace(/\/$/, "")}/auth/v1/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refresh_token: refreshToken }),
@@ -383,6 +383,45 @@ async function handleTranslatePageRequest(payload: {
   };
 }
 
+async function syncFromCookies(serverUrl?: string): Promise<{
+  ok: boolean;
+  state: StoredExtensionState;
+  synced?: boolean;
+}> {
+  const state = await getState();
+  const urlToUse = (serverUrl || state.serverUrl || "http://127.0.0.1:8000").replace(/\/$/, "");
+
+  if (!chrome.cookies?.get) {
+    return { ok: false, state, synced: false };
+  }
+
+  try {
+    const accessCookie = await chrome.cookies.get({
+      url: urlToUse,
+      name: "ct_access_token",
+    });
+
+    if (accessCookie && accessCookie.value) {
+      const refreshCookie = await chrome.cookies.get({
+        url: urlToUse,
+        name: "ct_refresh_token",
+      });
+
+      await setState({
+        accessToken: accessCookie.value,
+        refreshToken: refreshCookie?.value || "",
+      });
+
+      const syncRes = await syncUserInfoFromServer();
+      return { ok: true, state: syncRes.state, synced: true };
+    }
+  } catch (err) {
+    console.warn("Lỗi đọc cookie từ server:", err);
+  }
+
+  return { ok: false, state, synced: false };
+}
+
 async function handleGoogleLoginFlow(): Promise<{
   ok: boolean;
   error?: string;
@@ -394,28 +433,35 @@ async function handleGoogleLoginFlow(): Promise<{
   const redirectUri = `https://${extId}.chromiumapp.org/callback`;
   const authUrl = `${serverUrl}/login/?redirect_uri=${encodeURIComponent(redirectUri)}`;
 
-  if (!chrome.identity?.launchWebAuthFlow) {
-    return {
-      ok: false,
-      error: "Trình duyệt không hỗ trợ chrome.identity.launchWebAuthFlow.",
-    };
+  // 1. Kiểm tra nhanh xem trình duyệt đã đăng nhập trên Web chưa (qua cookies)
+  const quickCookieCheck = await syncFromCookies(serverUrl);
+  if (quickCookieCheck.ok && quickCookieCheck.state.accessToken) {
+    return { ok: true, state: quickCookieCheck.state };
   }
 
+  // 2. Mở tab bình thường để Google OAuth & Firebase hoạt động 100% không bị sandbox chặn
+  const loginTab = await chrome.tabs.create({ url: authUrl, active: true });
+  const targetTabId = loginTab.id;
+
   return new Promise((resolve) => {
-    chrome.identity.launchWebAuthFlow(
-      { url: authUrl, interactive: true },
-      async (responseUrl) => {
-        if (chrome.runtime.lastError || !responseUrl) {
-          resolve({
-            ok: false,
-            error:
-              chrome.runtime.lastError?.message ||
-              "Đã hủy hoặc không nhận được callback đăng nhập.",
-          });
-          return;
-        }
+    let resolved = false;
+
+    // Lắng nghe navigation của Tab xem khi nào nó được redirect về callback của Extension
+    const onUpdatedListener = async (
+      tabId: number,
+      changeInfo: chrome.tabs.TabChangeInfo,
+      tab: chrome.tabs.Tab
+    ) => {
+      if (tabId !== targetTabId || resolved) return;
+
+      const currentUrl = changeInfo.url || tab.url || "";
+      if (currentUrl.includes(`${extId}.chromiumapp.org/callback`)) {
+        resolved = true;
+        chrome.tabs.onUpdated.removeListener(onUpdatedListener);
+        chrome.tabs.onRemoved.removeListener(onRemovedListener);
+
         try {
-          const parsed = new URL(responseUrl);
+          const parsed = new URL(currentUrl);
           const hashParams = new URLSearchParams(
             parsed.hash ? parsed.hash.slice(1) : ""
           );
@@ -427,13 +473,27 @@ async function handleGoogleLoginFlow(): Promise<{
             parsed.searchParams.get("refresh_token") ||
             hashParams.get("refresh_token") ||
             "";
+
+          // Đóng tab đăng nhập lại sau khi lấy xong token
+          if (targetTabId) {
+            try {
+              await chrome.tabs.remove(targetTabId);
+            } catch (_) {}
+          }
+
           if (!accessToken) {
+            const cookieFallback = await syncFromCookies(serverUrl);
+            if (cookieFallback.ok && cookieFallback.state.accessToken) {
+              resolve({ ok: true, state: cookieFallback.state });
+              return;
+            }
             resolve({
               ok: false,
               error: "Callback không chứa access_token.",
             });
             return;
           }
+
           await setState({ accessToken, refreshToken });
           const syncRes = await syncUserInfoFromServer();
           resolve({ ok: true, state: syncRes.state });
@@ -444,7 +504,26 @@ async function handleGoogleLoginFlow(): Promise<{
           });
         }
       }
-    );
+    };
+
+    const onRemovedListener = async (tabId: number) => {
+      if (tabId === targetTabId && !resolved) {
+        resolved = true;
+        chrome.tabs.onUpdated.removeListener(onUpdatedListener);
+        chrome.tabs.onRemoved.removeListener(onRemovedListener);
+
+        // Fallback kiểm tra cookies nếu người dùng đóng tab
+        const cookieFallback = await syncFromCookies(serverUrl);
+        if (cookieFallback.ok && cookieFallback.state.accessToken) {
+          resolve({ ok: true, state: cookieFallback.state });
+        } else {
+          resolve({ ok: false, error: "Đã đóng tab đăng nhập." });
+        }
+      }
+    };
+
+    chrome.tabs.onUpdated.addListener(onUpdatedListener);
+    chrome.tabs.onRemoved.addListener(onRemovedListener);
   });
 }
 
@@ -498,10 +577,25 @@ export default defineBackground(() => {
       return true;
     }
 
-    if (message.type === "LOGOUT") {
-      setState({ accessToken: "", refreshToken: "", userInfo: null })
-        .then((st) => sendResponse({ ok: true, state: st }))
+    if (message.type === "SYNC_FROM_COOKIES") {
+      syncFromCookies(message.serverUrl)
+        .then((res) => sendResponse(res))
         .catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true;
+    }
+
+    if (message.type === "LOGOUT") {
+      getState().then(async (st) => {
+        const cleanUrl = (st.serverUrl || "http://127.0.0.1:8000").replace(/\/$/, "");
+        if (chrome.cookies?.remove) {
+          try {
+            await chrome.cookies.remove({ url: cleanUrl, name: "ct_access_token" });
+            await chrome.cookies.remove({ url: cleanUrl, name: "ct_refresh_token" });
+          } catch (_) {}
+        }
+        const updated = await setState({ accessToken: "", refreshToken: "", userInfo: null });
+        sendResponse({ ok: true, state: updated });
+      }).catch((err) => sendResponse({ ok: false, error: String(err) }));
       return true;
     }
 

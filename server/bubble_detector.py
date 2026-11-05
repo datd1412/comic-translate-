@@ -218,3 +218,4 @@ def get_bubble_detector() -> BubbleDetector:
     if _detector_instance is None:
         _detector_instance = BubbleDetector()
     return _detector_instance
+

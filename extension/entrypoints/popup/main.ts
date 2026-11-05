@@ -246,6 +246,14 @@ function initPopupOnMount(): void {
 
   chrome.runtime.sendMessage({ type: "GET_STATE" }, (resp) => {
     if (resp?.ok && resp.state) {
+      if (!resp.state.accessToken) {
+        chrome.runtime.sendMessage({ type: "SYNC_FROM_COOKIES" }, (cResp) => {
+          if (cResp?.ok && cResp.state?.accessToken) {
+            renderState(cResp.state);
+            return;
+          }
+        });
+      }
       renderState(resp.state);
       if (resp.state.accessToken) {
         void fetchAndSyncUserInfo(
@@ -309,9 +317,20 @@ googleLoginBtn.addEventListener("click", () => {
     });
     return;
   }
+  googleLoginBtn.disabled = true;
+  googleLoginBtn.textContent = "Đang kết nối...";
   chrome.runtime.sendMessage({ type: "LOGIN_GOOGLE" }, (resp) => {
+    googleLoginBtn.disabled = false;
     if (resp?.ok && resp.state) {
       renderState(resp.state);
+    } else {
+      chrome.runtime.sendMessage({ type: "SYNC_FROM_COOKIES" }, (cResp) => {
+        if (cResp?.ok && cResp.state?.accessToken) {
+          renderState(cResp.state);
+        } else {
+          googleLoginBtn.textContent = "Đăng nhập với Google";
+        }
+      });
     }
   });
 });
@@ -321,7 +340,7 @@ topupCreditBtn.addEventListener("click", () => {
     /\/$/,
     ""
   );
-  chrome.tabs.create({ url: `${baseUrl}/billing/v1/packages` });
+  chrome.tabs.create({ url: `${baseUrl}/#pricing` });
 });
 
 saveConfigBtn.addEventListener("click", () => {

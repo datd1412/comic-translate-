@@ -13,6 +13,7 @@ export default defineConfig({
       "scripting",
       "declarativeNetRequest",
       "declarativeNetRequestWithHostAccess",
+      "cookies",
     ],
     host_permissions: ["<all_urls>"],
     action: {

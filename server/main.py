@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+import os
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 import auth_routes
 import billing_routes
@@ -36,6 +40,24 @@ def create_app() -> FastAPI:
     application.include_router(billing_routes.router)
     application.include_router(translate_routes.router)
 
+    templates_dir = os.path.join(os.path.dirname(__file__), "templates")
+    templates = Jinja2Templates(directory=templates_dir)
+
+    static_dir = os.path.join(os.path.dirname(__file__), "static")
+    images_dir = os.path.join(static_dir, "images")
+    if os.path.exists(images_dir):
+        application.mount("/images", StaticFiles(directory=images_dir), name="images")
+    if os.path.exists(static_dir):
+        application.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    @application.get("/", response_class=HTMLResponse)
+    async def index(request: Request):
+        return templates.TemplateResponse(request, "landing.html", {"request": request})
+
+    @application.get("/admin/revenue", response_class=HTMLResponse)
+    async def admin_revenue(request: Request):
+        return templates.TemplateResponse(request, "admin_revenue.html", {"request": request})
+
     @application.get("/healthz")
     async def healthz():
         return {"status": "ok", "service": "comic-translate-vn-server"}
@@ -44,3 +66,9 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+

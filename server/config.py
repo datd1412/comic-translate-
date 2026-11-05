@@ -52,9 +52,13 @@ class Settings(BaseSettings):
     ALLOWED_EXTENSION_IDS: str = "abcdefghijklmnopabcdefghijklmnop"
     ALLOW_LOCALHOST_CALLBACK: bool = True
 
+    # Admin access (danh sách email admin phân tách bởi dấu phẩy)
+    ADMIN_EMAILS: str = ""
+
     # Firebase Auth
     FIREBASE_PROJECT_ID: str = ""
     FIREBASE_WEB_API_KEY: str = ""
+    FIREBASE_API_KEY: str = ""
     FIREBASE_AUTH_DOMAIN: str = ""
     FIREBASE_STORAGE_BUCKET: str = ""
     FIREBASE_MESSAGING_SENDER_ID: str = ""

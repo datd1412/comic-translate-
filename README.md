@@ -132,3 +132,4 @@ npm --prefix extension run test:unit
 ## 📄 License
 
 Dự án được phát triển phục vụ mục đích nghiên cứu và hỗ trợ cộng đồng đọc truyện tranh Việt Nam.
+

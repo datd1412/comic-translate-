@@ -54,6 +54,11 @@ def validate_callback_uri(
         )
 
     scheme = (parsed.scheme or "").lower()
+
+    # Trường hợp 1: Mobile Deep Link callback (Expo Go 'exp' hoặc Mobile App 'comictranslate')
+    if scheme in {"exp", "comictranslate"}:
+        return cleaned
+
     hostname = (parsed.hostname or "").lower()
 
     if not scheme or not hostname:
@@ -102,6 +107,8 @@ def validate_callback_uri(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Chromiumapp callback không cho phép port tùy chỉnh.",
             )
+        if "*" in ext_ids:
+            return cleaned
         allowed_hosts = {f"{ext_id}.chromiumapp.org" for ext_id in ext_ids if ext_id}
         if hostname in allowed_hosts:
             return cleaned

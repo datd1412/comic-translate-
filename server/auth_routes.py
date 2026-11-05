@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import os
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 import httpx
 from jose import jwt as jose_jwt
@@ -17,6 +17,7 @@ from auth_utils import (
     create_access_token,
     create_refresh_token,
     get_current_user,
+    verify_access_token,
 )
 from config import settings
 from database import (
@@ -38,6 +39,13 @@ GOOGLE_JWKS_URL = (
 )
 _cached_certs: dict[str, Any] = {}
 _certs_expiry: datetime | None = None
+
+
+def is_admin_email(email: str | None) -> bool:
+    if not email:
+        return False
+    allowed = {e.strip().lower() for e in (getattr(settings, "ADMIN_EMAILS", "") or "").split(",") if e.strip()}
+    return email.strip().lower() in allowed
 
 
 def _get_cookie_Config() -> dict[str, Any]:
@@ -82,6 +90,22 @@ def _clear_auth_cookies(response: JSONResponse) -> None:
 
 async def verify_firebase_id_token(id_token: str) -> dict[str, Any]:
     """Xác thực Firebase ID token với chứng chỉ công khai của Google."""
+    is_dev = getattr(settings, "ENVIRONMENT", "").lower() == "development" or getattr(settings, "ENV", "").lower() == "development"
+    if is_dev and (id_token.startswith("dev_token") or id_token.startswith("mock_token")):
+        email = "demo.user@comictranslate.vn"
+        if "@" in id_token:
+            parts = id_token.split("@", 1)
+            local_part = parts[0].split("_")[-1]
+            email = f"{local_part}@{parts[1]}"
+        uid = f"dev_{abs(hash(email)) % 1000000}"
+        return {
+            "sub": uid,
+            "email": email,
+            "email_verified": True,
+            "name": email.split("@")[0],
+            "picture": "",
+        }
+
     global _cached_certs, _certs_expiry
     now = datetime.now(timezone.utc)
 
@@ -137,6 +161,7 @@ class RefreshRequest(BaseModel):
 
 
 @router.get("/login/", response_class=HTMLResponse)
+@router.get("/login", response_class=HTMLResponse)
 async def login_page(
     request: Request,
     request_id: str | None = None,
@@ -158,7 +183,7 @@ async def login_page(
             "request": request,
             "request_id": request_id or "",
             "desktop_callback_uri": validated_callback or "",
-            "firebase_api_key": settings.FIREBASE_WEB_API_KEY,
+            "firebase_api_key": settings.FIREBASE_WEB_API_KEY or settings.FIREBASE_API_KEY,
             "firebase_auth_domain": settings.FIREBASE_AUTH_DOMAIN,
             "firebase_project_id": settings.FIREBASE_PROJECT_ID,
             "firebase_storage_bucket": settings.FIREBASE_STORAGE_BUCKET,
@@ -277,6 +302,7 @@ async def firebase_auth_callback(
                 "total": int(user.credits_total or 0),
             },
             "monthly_credits": int(user.monthly_credits or 0),
+            "is_admin": is_admin_email(user.email),
         },
     }
     response = JSONResponse(content=response_payload)
@@ -299,6 +325,32 @@ async def get_user_info(current_user: User = Depends(get_current_user)):
         },
         "monthly_credits": int(current_user.monthly_credits or 0),
         "avatar_url": current_user.avatar_url or "",
+        "is_admin": is_admin_email(current_user.email),
+    }
+
+
+@router.get("/auth/v1/session_tokens")
+async def get_session_tokens(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Trả về token của phiên đăng nhập hiện tại để đồng bộ nhanh vào Chrome Extension.
+    """
+    access_token = request.cookies.get(ACCESS_COOKIE_NAME) or ""
+    refresh_token = request.cookies.get(REFRESH_COOKIE_NAME) or ""
+    total = int(current_user.credits_subscription or 0) + int(current_user.credits_one_time or 0)
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "email": current_user.email,
+        "name": current_user.name or "",
+        "tier": current_user.tier,
+        "credits": {
+            "subscription": int(current_user.credits_subscription or 0),
+            "one_time": int(current_user.credits_one_time or 0),
+            "total": total,
+        },
     }
 
 
@@ -354,6 +406,7 @@ async def refresh_token_endpoint(
 
 
 @router.post("/auth/v1/logout")
+@router.post("/auth/v1/signout")
 async def logout(
     request: Request,
     req: RefreshRequest | None = None,

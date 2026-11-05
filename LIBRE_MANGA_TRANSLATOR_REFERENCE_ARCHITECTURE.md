@@ -247,3 +247,4 @@ $\rightarrow$ **Giao diện không bao giờ bị crash hoặc lệch vị trí 
 1. Thêm tầng **RT-DETR-v2 ONNX** vào `server/detector.py` (file weights `detector.onnx` 168 MB đã có sẵn trên máy tại `C:\Users\LENOVO\AppData\Local\ComicTranslate\models\detection\detector.onnx`).
 2. Tích hợp thuật toán `refineDetections`: gộp box tâm, lọc `medianBoxArea * 0.15` để dập tắt 100% rác áo thun.
 3. Thử nghiệm module vẽ ô đỏ số thứ tự trước khi đưa vào Gemini Vision.
+

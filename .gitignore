@@ -86,3 +86,12 @@ fixtures/
 server/models/
 *.onnx
 
+
+# Temporary test outputs and debug files
+.pytest_tmp/
+.pytest_tmp*/
+.pytest_temp/
+server/.pytest_temp/
+server/debug_*.jpg
+debug_*.jpg
+

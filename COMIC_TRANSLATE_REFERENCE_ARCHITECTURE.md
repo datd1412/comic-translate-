@@ -168,3 +168,4 @@ Trong `modules/utils/translator_utils.py`:
 1. Nhúng `InferenceSession` với `detector.onnx` (đã có sẵn trong AppData).
 2. Tách lớp `bubble_boxes` và `text_boxes`.
 3. Đảm bảo 100% chữ in áo và mép tranh bị cô lập, chỉ đưa chữ trong bóng thoại vào bản dịch.
+
