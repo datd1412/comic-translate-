@@ -379,22 +379,23 @@ async def translate_page_multimodal_gemini(
         f"{custom_ctx_str}"
         f"- Bảng thuật ngữ / xưng hô: {glossary_str}\n"
         f"- CÁC CÂU THOẠI TRANG TRƯỚC (KẾ THỪA MẠCH TRUYỆN & XƯNG HÔ):\n{prev_str}\n\n"
-        f"THỨ TỰ ĐỌC: Các ô thoại đã được đánh số đỏ [1], [2], ... theo thứ tự đọc {dir_desc}.\n\n"
+        f"THỨ TỰ ĐỌC: Các ô thoại đã được đánh số đỏ [1], [2], ... đến [{count}] theo thứ tự đọc {dir_desc}.\n\n"
         "QUY TẮC BẮT BUỘC:\n"
-        "1. Dịch chuẩn xác nội dung trong các ô đỏ có số thứ tự [1], [2], ... sang tiếng Việt tự nhiên, phù hợp bối cảnh nhân vật.\n"
+        "1. Đọc kỹ chữ gốc bên trong từng ô viền đỏ có nhãn số từ 1 đến " + str(count) + " và dịch sang tiếng Việt tự nhiên, đúng ngữ cảnh nhân vật.\n"
         "2. Khôi phục tên riêng phương Tây (Amelia, Wolfgang, Mozart,...) thay vì âm Hán-Việt thô kệch.\n"
-        "3. TUYỆT ĐỐI BỎ QUA bất kỳ chữ nào nằm ngoài ô đỏ (chữ in trên áo thun, logo mép tranh, watermark).\n"
-        f"4. Mảng 'translations' BẮT BUỘC có ĐÚNG {count} phần tử, đúng thứ tự từ Box 1 đến Box {count}.\n"
-        f"5. Mảng 'sourceTexts' BẮT BUỘC có ĐÚNG {count} phần tử, chứa chữ gốc bạn nhìn thấy trong từng ô đỏ.\n\n"
+        "3. TUYỆT ĐỐI BỎ QUA chữ nằm ngoài ô đỏ (chữ in trên áo, logo mép tranh, watermark). Nếu một ô đỏ chỉ chứa hình vẽ/đốm mực không có chữ thoại, trả về chuỗi rỗng \"\" cho ô đó.\n"
+        f"4. BẮT BUỘC gắn đúng trường 'box' (số thứ tự 1..{count} in trên nhãn đỏ của từng ô) để câu dịch của ô nào khớp chính xác 100% vào ô đó, TUYỆT ĐỐI KHÔNG gộp 2 ô làm lệch thứ tự.\n\n"
         "CHỈ TRẢ VỀ DUY NHẤT MỘT JSON OBJECT theo mẫu:\n"
         "{\n"
-        '  "translations": ["câu dịch cho box 1", "câu dịch cho box 2"],\n'
-        '  "sourceTexts": ["chữ gốc box 1", "chữ gốc box 2"]\n'
+        '  "items": [\n'
+        '    {"box": 1, "source": "chữ gốc ô 1", "translation": "câu dịch cho ô 1"},\n'
+        '    {"box": 2, "source": "chữ gốc ô 2", "translation": "câu dịch cho ô 2"}\n'
+        "  ]\n"
         "}\n"
         "Tuyệt đối không giải thích hay thêm ký hiệu markdown nào bên ngoài JSON."
     )
 
-    user_prompt = f"Vui lòng xử lý và dịch {count} bóng thoại được đánh số đỏ [1] đến [{count}] trong trang truyện."
+    user_prompt = f"Vui lòng đọc và dịch đầy đủ {count} ô thoại được đánh số đỏ từ [1] đến [{count}] trong trang truyện."
 
     raw_model = (settings.GEMINI_MODEL or "gemini-3.1-flash-lite").strip()
     model_name = raw_model[len("models/"):] if raw_model.startswith("models/") else raw_model
@@ -407,7 +408,7 @@ async def translate_page_multimodal_gemini(
         "Content-Type": "application/json",
         "x-goog-api-key": settings.GEMINI_API_KEY or "missing-gemini-key",
     }
-    llm_temp = float(getattr(settings, "LLM_TEMPERATURE", 0.3))
+    llm_temp = float(getattr(settings, "LLM_TEMPERATURE", 0.2))
     payload = {
         "systemInstruction": {"parts": [{"text": system_prompt}]},
         "contents": [
@@ -434,20 +435,43 @@ async def translate_page_multimodal_gemini(
     owns_client = http_client is None
     client = http_client or httpx.AsyncClient(timeout=settings.LLM_TIMEOUT_SECONDS)
     try:
-        resp = await client.post(gemini_url, json=payload, headers=headers)
-        if resp.status_code in (404, 503):
-            # Fallback nếu model bị 404 hoặc 503
-            for fallback_model in ["gemini-3.1-flash-lite", "gemini-3-flash-preview", "gemini-flash-lite-latest", "gemini-3.8-flash"]:
-                if fallback_model == model_name:
-                    continue
-                fallback_url = (
-                    f"https://generativelanguage.googleapis.com/v1beta/models/"
-                    f"{fallback_model}:generateContent?key={settings.GEMINI_API_KEY}"
+        candidate_models = [model_name]
+        for fb in ["gemini-3.1-flash-lite", "gemini-3-flash-preview", "gemini-flash-lite-latest"]:
+            if fb not in candidate_models:
+                candidate_models.append(fb)
+
+        resp: httpx.Response | None = None
+        last_err: Exception | None = None
+        for idx_m, m_name in enumerate(candidate_models):
+            target_url = (
+                f"https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{m_name}:generateContent?key={settings.GEMINI_API_KEY}"
+            )
+            req_timeout = 22.0 if idx_m == 0 else 25.0
+            try:
+                cur_resp = await client.post(
+                    target_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=req_timeout,
                 )
-                fallback_resp = await client.post(fallback_url, json=payload, headers=headers)
-                if fallback_resp.status_code == 200:
-                    resp = fallback_resp
+                if cur_resp.status_code == 200:
+                    resp = cur_resp
                     break
+                if cur_resp.status_code not in (404, 429, 500, 502, 503, 504):
+                    resp = cur_resp
+                    break
+                print(f"[WARN] Gemini model {m_name} returned HTTP {cur_resp.status_code}, trying fallback...")
+                resp = cur_resp
+            except (httpx.TimeoutException, httpx.HTTPError) as exc:
+                print(f"[WARN] Gemini model {m_name} timed out or network error ({exc}), trying fallback...")
+                last_err = exc
+                continue
+
+        if resp is None:
+            if last_err:
+                raise last_err
+            raise LLMTranslationError("Không thể kết nối tới Gemini Vision API.")
 
         if resp.status_code != 200:
             raise LLMTranslationError(f"Gemini Vision trả mã lỗi HTTP {resp.status_code}")
@@ -461,7 +485,7 @@ async def translate_page_multimodal_gemini(
         raw_text = "".join(str(p.get("text") or "") for p in parts).strip()
 
         # Parse JSON
-        parsed_obj: dict[str, Any] = {}
+        parsed_obj: Any = {}
         try:
             parsed_obj = json.loads(raw_text)
         except Exception:
@@ -479,10 +503,58 @@ async def translate_page_multimodal_gemini(
                     except Exception:
                         pass
 
+        # Ưu tiên 1: Map chính xác theo chỉ số 'box' (1..count) hoặc 'id' trong mảng 'items'/'blocks'
+        by_box_idx: dict[int, tuple[str, str]] = {}
+        items_arr = None
+        if isinstance(parsed_obj, dict):
+            if isinstance(parsed_obj.get("items"), list):
+                items_arr = parsed_obj["items"]
+            elif isinstance(parsed_obj.get("blocks"), list):
+                items_arr = parsed_obj["blocks"]
+        elif isinstance(parsed_obj, list):
+            items_arr = parsed_obj
+
+        if isinstance(items_arr, list) and items_arr:
+            for pos_idx, item in enumerate(items_arr):
+                if not isinstance(item, dict):
+                    continue
+                s_val = str(item.get("source") or item.get("source_text") or "").strip()
+                t_val = str(item.get("translation") or item.get("translated_text") or item.get("text") or "").strip()
+                target_idx: int | None = None
+                if "box" in item:
+                    try:
+                        target_idx = int(item["box"]) - 1
+                    except (ValueError, TypeError):
+                        target_idx = None
+                elif "id" in item:
+                    try:
+                        raw_id = int(item["id"])
+                        target_idx = raw_id - 1 if (1 <= raw_id <= count and all(int(x.get("id", 0)) >= 1 for x in items_arr if isinstance(x, dict) and "id" in x)) else raw_id
+                    except (ValueError, TypeError):
+                        target_idx = None
+                if target_idx is None:
+                    target_idx = pos_idx
+                if 0 <= target_idx < count:
+                    by_box_idx[target_idx] = (s_val, t_val)
+
+        if by_box_idx:
+            merged_blocks: list[dict[str, Any]] = []
+            for idx, box in enumerate(detected_boxes):
+                block_id = int(box.get("id", idx))
+                bbox = list(box.get("bbox") or [0, 0, 0, 0])
+                s_text, t_text = by_box_idx.get(idx, ("", ""))
+                merged_blocks.append({
+                    "id": block_id,
+                    "bbox": bbox,
+                    "source_text": s_text,
+                    "translation": t_text or s_text,
+                })
+            return merged_blocks
+
+        # Ưu tiên 2 (Fallback tương thích ngược): Mảng 'translations' và 'sourceTexts'
         raw_translations = parsed_obj.get("translations") if isinstance(parsed_obj, dict) else []
         raw_sources = parsed_obj.get("sourceTexts") if isinstance(parsed_obj, dict) else []
 
-        # Chuẩn hóa danh sách chuỗi
         translations: list[str] = []
         if isinstance(raw_translations, list):
             for item in raw_translations:
@@ -510,8 +582,7 @@ async def translate_page_multimodal_gemini(
         if len(source_texts) > count:
             source_texts = source_texts[:count]
 
-        # Ghép thành cấu trúc blocks chuẩn
-        merged_blocks: list[dict[str, Any]] = []
+        merged_blocks = []
         for idx, box in enumerate(detected_boxes):
             block_id = int(box.get("id", idx))
             bbox = list(box.get("bbox") or [0, 0, 0, 0])

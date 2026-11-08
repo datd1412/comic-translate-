@@ -94,4 +94,8 @@ server/models/
 server/.pytest_temp/
 server/debug_*.jpg
 debug_*.jpg
+*.exe
+*.log
+*.rar
+.latest_tunnel_url
 

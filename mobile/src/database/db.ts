@@ -41,7 +41,37 @@ export const initDB = async (db: SQLite.SQLiteDatabase): Promise<void> => {
       title TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
+};
+
+export const saveAppSetting = async (key: string, value: string): Promise<void> => {
+  try {
+    const db = await getDB();
+    await db.runAsync(
+      `INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)`,
+      [key, value]
+    );
+  } catch (error) {
+    console.warn('Lỗi lưu cấu hình SQLite:', error);
+  }
+};
+
+export const getAppSetting = async (key: string): Promise<string | null> => {
+  try {
+    const db = await getDB();
+    const row = await db.getFirstAsync<{ value: string }>(
+      `SELECT value FROM app_settings WHERE key = ?`,
+      [key]
+    );
+    return row ? row.value : null;
+  } catch (error) {
+    console.warn('Lỗi đọc cấu hình SQLite:', error);
+    return null;
+  }
 };
 
 export const saveHistoryItem = async (url: string, title: string, translatedCount: number = 0): Promise<void> => {

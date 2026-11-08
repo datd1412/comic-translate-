@@ -1,4 +1,37 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { NativeModules } from 'react-native';
+import * as Linking from 'expo-linking';
+
+/**
+ * Tự động phát hiện địa chỉ IP LAN của máy tính chạy Metro Bundler (Expo Go)
+ * giúp điện thoại không bị kẹt ở IP cũ khi đổi mạng Wi-Fi / Hotspot.
+ */
+export function detectDefaultServerUrl(): string {
+  try {
+    const scriptURL: string | undefined = NativeModules?.SourceCode?.scriptURL;
+    if (scriptURL) {
+      const match = scriptURL.match(/^https?:\/\/([^:/]+)/i);
+      if (match && match[1] && match[1] !== 'localhost' && match[1] !== '127.0.0.1') {
+        return `http://${match[1]}:8000`;
+      }
+    }
+  } catch {
+    // Ignore
+  }
+
+  try {
+    const linkingUrl = Linking.createURL('/');
+    const match = linkingUrl.match(/^(?:exp|http|https):\/\/([^:/]+)/i);
+    if (match && match[1] && match[1] !== 'localhost' && match[1] !== '127.0.0.1') {
+      return `http://${match[1]}:8000`;
+    }
+  } catch {
+    // Ignore
+  }
+
+  // Fallback về IP Wi-Fi hiện tại của máy tính
+  return 'http://192.168.2.42:8000';
+}
 
 interface SettingsState {
   serverUrl: string;
@@ -9,8 +42,7 @@ interface SettingsState {
 }
 
 const initialState: SettingsState = {
-  // IP Wi-Fi của máy tính đang chạy Backend (172.20.10.4)
-  serverUrl: 'http://172.20.10.4:8000',
+  serverUrl: detectDefaultServerUrl(),
   langPair: 'zh-vi',
   readingDirection: 'rtl',
   autoTranslate: false,

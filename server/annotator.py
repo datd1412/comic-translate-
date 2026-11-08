@@ -6,6 +6,18 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont
 
 
+def _load_badge_font(size: int) -> ImageFont.ImageFont:
+    for font_name in ("arialbd.ttf", "arial.ttf", "segoeui.ttf", "tahoma.ttf", "DejaVuSans-Bold.ttf"):
+        try:
+            return ImageFont.truetype(font_name, size=size)
+        except Exception:
+            continue
+    try:
+        return ImageFont.load_default(size=size)
+    except Exception:
+        return ImageFont.load_default()
+
+
 def draw_numbered_bboxes(
     image: Image.Image,
     boxes: list[dict[str, Any]],
@@ -27,14 +39,12 @@ def draw_numbered_bboxes(
     new_h = max(1, int(round(h * scale)))
 
     # Tạo canvas thu nhỏ
-    canvas = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    canvas = image.convert("RGB").resize((new_w, new_h), Image.Resampling.LANCZOS)
     draw = ImageDraw.Draw(canvas)
 
-    line_width = max(2, int(round(3 * scale)))
-    badge_h = max(18, int(round(22 * scale)))
-
-    # Cố gắng tải font mặc định có sẵn, nếu không dùng load_default
-    font = ImageFont.load_default()
+    line_width = max(2, int(round(2.5 * scale)))
+    font_size = max(12, min(20, int(round(16 * scale))))
+    font = _load_badge_font(font_size)
 
     for idx, item in enumerate(boxes):
         bbox = item.get("bbox") or [0, 0, 0, 0]
@@ -44,20 +54,29 @@ def draw_numbered_bboxes(
         y2 = int(round(bbox[3] * scale))
 
         num_str = str(idx + 1)
-        # Tính chiều rộng huy hiệu theo số chữ số
-        badge_w = max(20, int(round((14 + 10 * len(num_str)) * scale)))
+        try:
+            tb = draw.textbbox((0, 0), num_str, font=font)
+            tw = tb[2] - tb[0]
+            th = tb[3] - tb[1]
+        except Exception:
+            tw = 8 * len(num_str)
+            th = 12
+
+        pad_x, pad_y = 4, 2
+        badge_w = tw + pad_x * 2
+        badge_h = th + pad_y * 2
 
         # 1. Vẽ viền đỏ quanh bóng thoại
         draw.rectangle([x1, y1, x2, y2], outline="#ef4444", width=line_width)
 
-        # 2. Vẽ huy hiệu đỏ chứa số thứ tự ở góc trên bên trái
+        # 2. Vẽ huy hiệu đỏ chứa số thứ tự ở ngay phía trên viền trái (tránh đè lên chữ bên trong bóng)
         badge_y = max(0, y1 - badge_h) if y1 >= badge_h else y1
-        badge_x2 = min(new_w, x1 + badge_w)
+        badge_x1 = max(0, min(new_w - badge_w, x1))
+        badge_x2 = min(new_w, badge_x1 + badge_w)
         badge_y2 = min(new_h, badge_y + badge_h)
 
-        draw.rectangle([x1, badge_y, badge_x2, badge_y2], fill="#ef4444")
-        # In số màu trắng nổi bật
-        draw.text((x1 + 4, badge_y + 2), num_str, fill="#ffffff", font=font)
+        draw.rectangle([badge_x1, badge_y, badge_x2, badge_y2], fill="#ef4444", outline="#ffffff", width=1)
+        draw.text((badge_x1 + pad_x, badge_y + pad_y - 1), num_str, fill="#ffffff", font=font)
 
     buf = io.BytesIO()
     canvas.save(buf, format="JPEG", quality=quality)

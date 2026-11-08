@@ -39,6 +39,23 @@ GOOGLE_JWKS_URL = (
 )
 _cached_certs: dict[str, Any] = {}
 _certs_expiry: datetime | None = None
+_pending_login_requests: dict[str, dict[str, Any]] = {}
+
+
+def _store_pending_login(request_id: str | None, payload: dict[str, Any]) -> None:
+    if not request_id or not request_id.strip():
+        return
+    now_ts = datetime.now(timezone.utc).timestamp()
+    expired = [
+        k for k, v in _pending_login_requests.items()
+        if now_ts - v.get("created_at", 0) > 300
+    ]
+    for k in expired:
+        _pending_login_requests.pop(k, None)
+    _pending_login_requests[request_id.strip()] = {
+        "created_at": now_ts,
+        "payload": payload,
+    }
 
 
 def is_admin_email(email: str | None) -> bool:
@@ -92,12 +109,15 @@ async def verify_firebase_id_token(id_token: str) -> dict[str, Any]:
     """Xác thực Firebase ID token với chứng chỉ công khai của Google."""
     is_dev = getattr(settings, "ENVIRONMENT", "").lower() == "development" or getattr(settings, "ENV", "").lower() == "development"
     if is_dev and (id_token.startswith("dev_token") or id_token.startswith("mock_token")):
+        import hashlib
+        import re
+
         email = "demo.user@comictranslate.vn"
-        if "@" in id_token:
-            parts = id_token.split("@", 1)
-            local_part = parts[0].split("_")[-1]
-            email = f"{local_part}@{parts[1]}"
-        uid = f"dev_{abs(hash(email)) % 1000000}"
+        raw_after_prefix = re.sub(r"^(?:dev_token_|mock_token_)", "", id_token.strip())
+        if "@" in raw_after_prefix:
+            email = raw_after_prefix.strip().lower()
+        uid_hash = hashlib.sha256(email.encode("utf-8")).hexdigest()[:12]
+        uid = f"dev_{uid_hash}"
         return {
             "sub": uid,
             "email": email,
@@ -156,8 +176,163 @@ class FirebaseAuthRequest(BaseModel):
     redirect_uri: str | None = None
 
 
+import asyncio
+import ipaddress
+import re
+import subprocess
+
 class RefreshRequest(BaseModel):
     refresh_token: str | None = None
+
+
+async def _get_active_ngrok_url() -> str | None:
+    """Lấy URL ngrok đang chạy qua Ngrok API cục bộ (cổng 4040)."""
+    try:
+        async with httpx.AsyncClient(timeout=0.4) as client:
+            resp = await client.get("http://127.0.0.1:4040/api/tunnels")
+            if resp.status_code == 200:
+                data = resp.json()
+                for tunnel in data.get("tunnels", []):
+                    pub_url = tunnel.get("public_url", "")
+                    if pub_url.startswith("https://"):
+                        return pub_url
+    except Exception:
+        pass
+    return None
+
+
+async def _get_active_tunnel_url() -> str | None:
+    """Lấy URL tunnel đang chạy (ưu tiên Ngrok 127.0.0.1:4040, sau đó đến Cloudflare 127.0.0.1:20241, hoặc biến môi trường)."""
+    # 1. Ưu tiên Ngrok API cục bộ (cổng 4040)
+    ngrok_url = await _get_active_ngrok_url()
+    if ngrok_url:
+        return ngrok_url
+
+    # 2. Biến môi trường PUBLIC_TUNNEL_URL (nếu chỉ định rõ ngrok)
+    env_tunnel = (os.getenv("PUBLIC_TUNNEL_URL") or "").strip().rstrip("/")
+    if "ngrok" in env_tunnel and env_tunnel.startswith("https://"):
+        return env_tunnel
+
+    # 3. Kiểm tra Cloudflare metrics (cổng 20241-20245)
+    async with httpx.AsyncClient(timeout=0.3) as client:
+        for port in (20241, 20242, 20243, 20244, 20245):
+            try:
+                resp = await client.get(f"http://127.0.0.1:{port}/metrics")
+                if resp.status_code == 200:
+                    match = re.search(
+                        r'userHostname="(https://[a-z0-9-]+\.trycloudflare\.com)"',
+                        resp.text,
+                    )
+                    if match:
+                        return match.group(1)
+            except Exception:
+                continue
+
+    if env_tunnel.startswith("https://"):
+        return env_tunnel
+
+    return None
+
+
+async def ensure_tunnel_running() -> str | None:
+    """
+    Đảm bảo ngrok.exe (hoặc cloudflared.exe) đang chạy ngầm độc lập (Detached Process).
+    Ưu tiên Ngrok với static domain cố định để không bao giờ phải đổi tên miền trên Firebase.
+    """
+    # 1. Nếu Ngrok đã chạy sẵn rồi thì dùng luôn
+    active_ngrok = await _get_active_ngrok_url()
+    if active_ngrok:
+        return active_ngrok
+
+    server_dir = os.path.dirname(__file__)
+    ngrok_exe = os.path.join(server_dir, "ngrok.exe")
+    cf_exe = os.path.join(server_dir, "cloudflared.exe")
+
+    creationflags = 0
+    if os.name == "nt":
+        # DETACHED_PROCESS (0x00000008) | CREATE_NEW_PROCESS_GROUP (0x00000200) | CREATE_NO_WINDOW (0x08000000)
+        creationflags = 0x00000008 | 0x00000200 | 0x08000000
+
+    # A. ƯU TIÊN NGROK
+    if os.path.exists(ngrok_exe):
+        domain = (os.getenv("NGROK_DOMAIN") or "glorious-apple-unissued.ngrok-free.dev").strip()
+        authtoken = (os.getenv("NGROK_AUTHTOKEN") or "").strip()
+        ngrok_cmd = [ngrok_exe, "http", "8000", "--url", f"https://{domain}"]
+        if authtoken:
+            ngrok_cmd.extend(["--authtoken", authtoken])
+
+        try:
+            log_path = os.path.join(server_dir, "ngrok.log")
+            log_file = open(log_path, "a", encoding="utf-8")
+            subprocess.Popen(
+                ngrok_cmd,
+                stdout=log_file,
+                stderr=log_file,
+                stdin=subprocess.DEVNULL,
+                creationflags=creationflags,
+                close_fds=True,
+            )
+            for _ in range(16):
+                await asyncio.sleep(0.5)
+                url = await _get_active_ngrok_url()
+                if url:
+                    return url
+        except Exception as exc:
+            print(f"[TUNNEL] Ngrok start warning: {exc}")
+
+    # B. DỰ PHÒNG CLOUDFLARE
+    if os.path.exists(cf_exe):
+        try:
+            log_path = os.path.join(server_dir, "cloudflared.log")
+            log_file = open(log_path, "a", encoding="utf-8")
+            subprocess.Popen(
+                [
+                    cf_exe,
+                    "tunnel",
+                    "--url",
+                    "http://127.0.0.1:8000",
+                    "--metrics",
+                    "127.0.0.1:20241",
+                ],
+                stdout=log_file,
+                stderr=log_file,
+                stdin=subprocess.DEVNULL,
+                creationflags=creationflags,
+                close_fds=True,
+            )
+            for _ in range(15):
+                await asyncio.sleep(0.5)
+                url = await _get_active_tunnel_url()
+                if url:
+                    return url
+        except Exception as exc:
+            print(f"[TUNNEL] Cloudflared start warning: {exc}")
+
+    return None
+
+
+async def ensure_cloudflare_tunnel_running() -> str | None:
+    """Tương thích ngược."""
+    return await ensure_tunnel_running()
+
+
+def _is_private_lan_host(hostname: str | None) -> bool:
+    if not hostname:
+        return False
+    host = hostname.strip().lower()
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_private
+    except ValueError:
+        return False
+
+
+@router.get("/auth/v1/tunnel_info")
+async def get_tunnel_info():
+    tunnel_url = await _get_active_tunnel_url()
+    return {"tunnel_url": tunnel_url}
 
 
 @router.get("/login/", response_class=HTMLResponse)
@@ -175,6 +350,18 @@ async def login_page(
     """
     raw_callback = desktop_callback_uri if desktop_callback_uri is not None else redirect_uri
     validated_callback = validate_callback_uri(raw_callback)
+
+    # Tự động chuyển hướng từ IP LAN (192.168.x.x) sang Tunnel cố định (Ngrok/Cloudflare HTTPS)
+    # để Firebase Google Sign-In hoạt động trực tiếp trên Mobile mà không cần người dùng đổi IP thủ công.
+    incoming_host = (request.headers.get("x-forwarded-host") or request.url.hostname or "").split(":")[0]
+    if _is_private_lan_host(incoming_host):
+        tunnel_url = await _get_active_tunnel_url()
+        if not tunnel_url:
+            tunnel_url = await ensure_tunnel_running()
+        if tunnel_url:
+            query_str = request.url.query
+            target_url = f"{tunnel_url}/login/" + (f"?{query_str}" if query_str else "")
+            return RedirectResponse(url=target_url, status_code=302)
 
     return templates.TemplateResponse(
         request,
@@ -305,9 +492,34 @@ async def firebase_auth_callback(
             "is_admin": is_admin_email(user.email),
         },
     }
+    _store_pending_login(body.request_id, response_payload)
     response = JSONResponse(content=response_payload)
     _set_auth_cookies(response, access_token, refresh_token_str)
     return response
+
+
+@router.get("/auth/v1/poll_session")
+async def poll_login_session(request_id: str):
+    """
+    Cho phép Mobile App / Desktop App kiểm tra kết quả đăng nhập theo `request_id`
+    trong trường hợp trình duyệt WebBrowser (Android Custom Tabs) chặn auto-redirect về `exp://`.
+    Giữ kết quả trong bộ nhớ đệm suốt thời hạn TTL để tránh race-condition khi nhiều nhịp poll gọi gối nhau.
+    """
+    rid = (request_id or "").strip()
+    if not rid:
+        return {"status": "pending"}
+    entry = _pending_login_requests.get(rid)
+    if not entry:
+        return {"status": "pending"}
+    now_ts = datetime.now(timezone.utc).timestamp()
+    if now_ts - entry.get("created_at", 0) > 300:
+        _pending_login_requests.pop(rid, None)
+        return {"status": "expired"}
+    payload = entry["payload"]
+    return {
+        "status": "completed",
+        **payload,
+    }
 
 
 @router.get("/auth/v1/user_info")

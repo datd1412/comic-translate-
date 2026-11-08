@@ -21,10 +21,11 @@ import {
   toggleReadingDirection,
   setLangPair,
 } from '../store/settingsSlice';
-import { saveHistoryItem, saveBookmarkItem } from '../database/db';
+import { saveHistoryItem, saveBookmarkItem, saveAppSetting } from '../database/db';
 import {
   translatePageWithImageUrl,
   loginWithFirebaseToken,
+  refreshAccessToken,
   TranslatedBlock,
 } from '../api/comicApi';
 import { MANGA_INJECTED_JS } from '../utils/injectedScript';
@@ -42,7 +43,7 @@ export const BrowserScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const webViewRef = useRef<any>(null);
 
-  const { user, accessToken } = useSelector((state: RootState) => state.auth);
+  const { user, accessToken, refreshToken } = useSelector((state: RootState) => state.auth);
   const { serverUrl, showOriginal, langPair, readingDirection } = useSelector(
     (state: RootState) => state.settings
   );
@@ -54,7 +55,13 @@ export const BrowserScreen: React.FC = () => {
   const [canGoForward, setCanGoForward] = useState(false);
   const [loading, setLoading] = useState(false);
   const [translating, setTranslating] = useState(false);
+  const [translatingPageIndex, setTranslatingPageIndex] = useState<number | null>(null);
   const [translatedBlocks, setTranslatedBlocks] = useState<TranslatedBlock[]>([]);
+
+  // Tự động cập nhật script mới nhất vào WebView (kể cả khi Fast Refresh không reload trang)
+  useEffect(() => {
+    webViewRef.current?.injectJavaScript(MANGA_INJECTED_JS);
+  }, [currentUrl]);
 
   // Điều hướng đến URL mới
   const handleGoToUrl = () => {
@@ -84,9 +91,13 @@ export const BrowserScreen: React.FC = () => {
         setTranslating(false);
         Alert.alert('Thông báo', data.message);
       } else if (data.type === 'TRANSLATE_PAGE_REQUEST') {
-        // NHẬN LINK ẢNH GỐC (imageUrl) VÀ TẢI BLOB GỬI BACKEND THẬT!
+        if (data.pageIndex) {
+          setTranslatingPageIndex(Number(data.pageIndex));
+        }
+        // NHẬN LINK ẢNH GỐC (imageUrl) HOẶC DỮ LIỆU ẢNH TRONG WEBVIEW (imageDataUrl) VÀ GỬI BACKEND THẬT!
         await handleProcessTranslateRequest(
           data.imageUrl,
+          data.imageDataUrl || '',
           data.refererOrigin,
           data.pageTitle || pageTitle,
           data.pageUrl || currentUrl
@@ -97,9 +108,10 @@ export const BrowserScreen: React.FC = () => {
     }
   };
 
-  // Tải file nhị phân từ imageUrl và gửi lên Backend FastAPI
+  // Tải file nhị phân từ imageUrl / imageDataUrl và gửi lên Backend FastAPI
   const handleProcessTranslateRequest = async (
     imageUrl: string,
+    imageDataUrl: string,
     refererOrigin: string,
     title: string,
     url: string
@@ -110,21 +122,22 @@ export const BrowserScreen: React.FC = () => {
       let tokenToUse = accessToken;
 
       // Đảm bảo luôn có JWT token thật (nếu chưa có hoặc là dev token giả, xin token mới)
+      const fallbackEmail = user?.email || 'student@mma301.fpt.edu.vn';
       if (!tokenToUse || tokenToUse.startsWith('dev_token_')) {
         try {
           const authRes = await loginWithFirebaseToken(
             serverUrl,
-            'dev_token_student@mma301.fpt.edu.vn'
+            `dev_token_${fallbackEmail}`
           );
           if (authRes.access_token) {
             tokenToUse = authRes.access_token;
-            dispatch(
-              loginSuccess({
-                user: authRes.user_info,
-                accessToken: authRes.access_token,
-                refreshToken: authRes.refresh_token || '',
-              })
-            );
+            const sessionPayload = {
+              user: authRes.user_info,
+              accessToken: authRes.access_token,
+              refreshToken: authRes.refresh_token || '',
+            };
+            dispatch(loginSuccess(sessionPayload));
+            await saveAppSetting('auth_session', JSON.stringify(sessionPayload));
           }
         } catch (authErr) {
           console.warn('Không thể tự động lấy token:', authErr);
@@ -135,31 +148,56 @@ export const BrowserScreen: React.FC = () => {
       try {
         result = await translatePageWithImageUrl(serverUrl, tokenToUse || '', {
           imageUrl: imageUrl,
+          imageDataUrl: imageDataUrl,
           refererOrigin: refererOrigin,
           langPair: langPair,
           readingDirection: readingDirection,
           pageTitle: title,
         });
       } catch (callErr: any) {
-        // Nếu gặp lỗi 401 Unauthorized (Token hết hạn), tự động xin lại token mới và thử lại 1 lần duy nhất
+        // Nếu gặp lỗi 401 Unauthorized (Token hết hạn), ưu tiên dùng refreshToken trước, sau đó mới fallback
         if (
           String(callErr.message || '').includes('401') ||
           String(callErr.message || '').toLowerCase().includes('unauthorized')
         ) {
-          const freshAuth = await loginWithFirebaseToken(
-            serverUrl,
-            'dev_token_student@mma301.fpt.edu.vn'
-          );
-          tokenToUse = freshAuth.access_token;
-          dispatch(
-            loginSuccess({
+          let refreshed = false;
+          if (refreshToken && user) {
+            try {
+              const refRes = await refreshAccessToken(serverUrl, refreshToken);
+              if (refRes.access_token) {
+                tokenToUse = refRes.access_token;
+                const sessionPayload = {
+                  user,
+                  accessToken: refRes.access_token,
+                  refreshToken: refRes.refresh_token || refreshToken,
+                };
+                dispatch(loginSuccess(sessionPayload));
+                await saveAppSetting('auth_session', JSON.stringify(sessionPayload));
+                refreshed = true;
+              }
+            } catch {
+              // Refresh token hết hạn -> fallback bên dưới
+            }
+          }
+
+          if (!refreshed) {
+            const freshAuth = await loginWithFirebaseToken(
+              serverUrl,
+              `dev_token_${fallbackEmail}`
+            );
+            tokenToUse = freshAuth.access_token;
+            const sessionPayload = {
               user: freshAuth.user_info,
               accessToken: freshAuth.access_token,
               refreshToken: freshAuth.refresh_token || '',
-            })
-          );
-          result = await translatePageWithImageUrl(serverUrl, tokenToUse, {
+            };
+            dispatch(loginSuccess(sessionPayload));
+            await saveAppSetting('auth_session', JSON.stringify(sessionPayload));
+          }
+
+          result = await translatePageWithImageUrl(serverUrl, tokenToUse || '', {
             imageUrl: imageUrl,
+            imageDataUrl: imageDataUrl,
             refererOrigin: refererOrigin,
             langPair: langPair,
             readingDirection: readingDirection,
@@ -179,15 +217,21 @@ export const BrowserScreen: React.FC = () => {
         }
 
         if (result.blocks.length === 0) {
+          webViewRef.current?.injectJavaScript(
+            'window.__clearTranslatingStatus && window.__clearTranslatingStatus(); true;'
+          );
           Alert.alert(
             'Không tìm thấy câu thoại',
             'AI không phát hiện thấy bong bóng thoại nào trên bức ảnh này (trang bìa hoặc hình minh họa). Bạn không bị trừ credit!'
           );
         } else {
-          // Ra lệnh cho WebView vẽ đè các khối thoại lên trang web
+          if (showOriginal) {
+            dispatch(toggleShowOriginal());
+          }
+          // Ra lệnh cho WebView vẽ đè các khối thoại tiếng Việt lên trang web
           const renderScript = `window.__renderRealTranslatedBlocks(${JSON.stringify(
             result.blocks
-          )}, ${showOriginal}); true;`;
+          )}, false); true;`;
           webViewRef.current?.injectJavaScript(renderScript);
 
           // Lưu vào SQLite
@@ -201,12 +245,24 @@ export const BrowserScreen: React.FC = () => {
         }
       }
     } catch (error: any) {
-      Alert.alert(
-        'Lỗi từ Backend',
-        `${error.message}\n\nHãy kiểm tra kết nối tới Server PC (${serverUrl})`
+      webViewRef.current?.injectJavaScript(
+        'window.__clearTranslatingStatus && window.__clearTranslatingStatus(); true;'
       );
+      const errMsg = String(error?.message || error || '');
+      if (errMsg.startsWith('[CDN]') || errMsg.includes('bzcdn.net')) {
+        Alert.alert(
+          'Lỗi tải ảnh từ CDN truyện',
+          `${errMsg.replace(/^\[CDN\]\s*/, '')}\n\nHãy cuộn trang để ảnh truyện hiện rõ trên màn hình rồi bấm Dịch lại.`
+        );
+      } else {
+        Alert.alert(
+          'Lỗi từ Backend',
+          `${errMsg}\n\nHãy kiểm tra kết nối tới Server PC (${serverUrl})`
+        );
+      }
     } finally {
       setTranslating(false);
+      setTranslatingPageIndex(null);
     }
   };
 
@@ -237,22 +293,20 @@ export const BrowserScreen: React.FC = () => {
     }
 
     setTranslating(true);
-    // Yêu cầu script trong WebView trích xuất imageUrl
+    // Đảm bảo script mới nhất đã được nạp rồi kích hoạt đánh dấu khung viền mờ + trích xuất ảnh
     webViewRef.current?.injectJavaScript(
-      'window.__triggerTranslateActivePage(); true;'
+      `${MANGA_INJECTED_JS}; window.__triggerTranslateActivePage(); true;`
     );
   };
 
-  // Xem ảnh gốc / Xem bản dịch
+  // Xem ảnh gốc / Xem bản dịch (ẩn toàn bộ khung đè để thấy ảnh truyện gốc giống Extension)
   const handleToggleOriginal = () => {
     const nextState = !showOriginal;
     dispatch(toggleShowOriginal());
-    if (translatedBlocks.length > 0) {
-      const renderScript = `window.__renderRealTranslatedBlocks(${JSON.stringify(
-        translatedBlocks
-      )}, ${nextState}); true;`;
-      webViewRef.current?.injectJavaScript(renderScript);
-    }
+    const toggleScript = `if (window.__setShowOriginalMode) { window.__setShowOriginalMode(${nextState}); } else if (window.__renderRealTranslatedBlocks) { window.__renderRealTranslatedBlocks(${JSON.stringify(
+      translatedBlocks
+    )}, ${nextState}); } true;`;
+    webViewRef.current?.injectJavaScript(toggleScript);
   };
 
   // Đổi chiều đọc RTL / LTR
@@ -402,49 +456,65 @@ export const BrowserScreen: React.FC = () => {
             if (navState.title) setPageTitle(navState.title);
           }}
           onLoadStart={() => setLoading(true)}
-          onLoadEnd={() => setLoading(false)}
+          onLoadEnd={() => {
+            setLoading(false);
+            webViewRef.current?.injectJavaScript(MANGA_INJECTED_JS);
+          }}
           allowsBackForwardNavigationGestures
           javaScriptEnabled={true}
           domStorageEnabled={true}
           mixedContentMode="always"
         />
 
-        {/* Floating Action Buttons */}
+        {/* Floating Action Buttons (Gọn nhẹ, không che khuất khung tranh) */}
         <View style={styles.fabContainer}>
           {translatedBlocks.length > 0 && (
             <TouchableOpacity
               style={[styles.fabSecondary, showOriginal && styles.fabActive]}
               onPress={handleToggleOriginal}
+              activeOpacity={0.85}
             >
               <Ionicons
                 name={showOriginal ? 'eye-outline' : 'language-outline'}
-                size={20}
-                color={showOriginal ? "#FFFFFF" : "#EA580C"}
+                size={14}
+                color={showOriginal ? '#FFFFFF' : '#EA580C'}
               />
-              <Text style={styles.fabSecondaryText}>
-                {showOriginal ? 'Xem bản dịch' : 'Xem ảnh gốc'}
+              <Text
+                style={[
+                  styles.fabSecondaryText,
+                  showOriginal && { color: '#FFFFFF' },
+                ]}
+              >
+                {showOriginal ? 'Bản dịch' : 'Ảnh gốc'}
               </Text>
             </TouchableOpacity>
           )}
 
-          <TouchableOpacity style={styles.fabBookmark} onPress={handleBookmark}>
-            <Ionicons name="bookmark-outline" size={20} color="#475569" />
+          <TouchableOpacity
+            style={styles.fabBookmark}
+            onPress={handleBookmark}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="bookmark-outline" size={15} color="#475569" />
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[styles.fabPrimary, translating && styles.fabDisabled]}
             onPress={handleTriggerTranslate}
             disabled={translating}
+            activeOpacity={0.85}
           >
             {translating ? (
               <>
-                <ActivityIndicator color="#FFFFFF" size="small" />
-                <Text style={styles.fabPrimaryText}>Đang dịch...</Text>
+                <ActivityIndicator color="#FFFFFF" size="small" style={{ transform: [{ scale: 0.75 }] }} />
+                <Text style={styles.fabPrimaryText}>
+                  {translatingPageIndex ? `Đang dịch #${translatingPageIndex}...` : 'Đang dịch...'}
+                </Text>
               </>
             ) : (
               <>
-                <Ionicons name="language-outline" size={20} color="#FFFFFF" />
-                <Text style={styles.fabPrimaryText}>Dịch trang</Text>
+                <Ionicons name="language-outline" size={15} color="#FFFFFF" />
+                <Text style={styles.fabPrimaryText}>Dịch</Text>
               </>
             )}
           </TouchableOpacity>
@@ -582,49 +652,49 @@ const styles = StyleSheet.create({
   },
   fabContainer: {
     position: 'absolute',
-    bottom: 20,
-    right: 16,
+    bottom: 10,
+    right: 10,
     flexDirection: 'column',
     alignItems: 'flex-end',
-    gap: 10,
+    gap: 6,
   },
   fabPrimary: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#F97316',
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    borderRadius: 28,
+    gap: 5,
+    backgroundColor: 'rgba(249, 115, 22, 0.92)',
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 18,
     shadowColor: '#F97316',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
   },
   fabDisabled: {
-    opacity: 0.75,
+    opacity: 0.8,
   },
   fabPrimaryText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 11.5,
     fontWeight: '700',
   },
   fabSecondary: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#FFFFFF',
+    gap: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
     borderWidth: 1,
     borderColor: '#FED7AA',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 3,
   },
   fabActive: {
     backgroundColor: '#EA580C',
@@ -632,23 +702,23 @@ const styles = StyleSheet.create({
   },
   fabSecondaryText: {
     color: '#EA580C',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
   },
   fabBookmark: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 2,
   },
   accountBanner: {
     flexDirection: 'row',

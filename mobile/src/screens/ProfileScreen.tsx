@@ -16,9 +16,14 @@ import * as Linking from 'expo-linking';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '../store';
 import { loginSuccess, logout, updateUserInfo } from '../store/authSlice';
-import { setServerUrl } from '../store/settingsSlice';
-import { loginWithFirebaseToken, fetchUserInfo } from '../api/comicApi';
-import { getHistoryItems, clearHistory, HistoryItem } from '../database/db';
+import { setServerUrl, detectDefaultServerUrl } from '../store/settingsSlice';
+import { loginWithFirebaseToken, fetchUserInfo, pollAuthSession } from '../api/comicApi';
+import {
+  getHistoryItems,
+  clearHistory,
+  HistoryItem,
+  saveAppSetting,
+} from '../database/db';
 import { ServerConfigModal } from '../components/ServerConfigModal';
 import { sendLocalNotification } from '../utils/notifications';
 
@@ -72,18 +77,72 @@ export const ProfileScreen: React.FC = () => {
     }
   };
 
-  // 1. ĐĂNG NHẬP GOOGLE QUA WEBBROWSER OAUTH (Expo Go Deep Link)
+  // 1. ĐĂNG NHẬP GOOGLE QUA WEBBROWSER OAUTH (Expo Go Deep Link + Polling dự phòng)
   const handleGoogleLogin = async () => {
+    let pollTimer: any = null;
     try {
       setLoggingIn(true);
       const redirectUrl = Linking.createURL('callback');
-      const cleanServer = (serverUrl || 'http://172.20.10.4:8000').replace(/\/$/, '');
-      const authUrl = `${cleanServer}/login/?redirect_uri=${encodeURIComponent(redirectUrl)}`;
+      const cleanServer = (serverUrl || detectDefaultServerUrl()).replace(/\/$/, '');
+      const requestId = `ctvn_mob_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const authUrl = `${cleanServer}/login/?request_id=${encodeURIComponent(
+        requestId
+      )}&redirect_uri=${encodeURIComponent(redirectUrl)}&prompt=select_account`;
 
       console.log('[AUTH] Mở WebBrowser đăng nhập Google:', authUrl);
       console.log('[AUTH] Đang chờ callback chuyển về:', redirectUrl);
 
+      let completedViaPoll = false;
+      const applyAuthSuccess = async (
+        token: string,
+        refreshToken: string,
+        userInfo?: any
+      ) => {
+        if (completedViaPoll) return;
+        completedViaPoll = true;
+        if (pollTimer) clearInterval(pollTimer);
+        try {
+          WebBrowser.dismissAuthSession();
+        } catch {
+          // Ignore
+        }
+        const resolvedUser = userInfo || (await fetchUserInfo(cleanServer, token));
+        const sessionPayload = {
+          user: resolvedUser,
+          accessToken: token,
+          refreshToken: refreshToken || '',
+        };
+        dispatch(loginSuccess(sessionPayload));
+        await saveAppSetting('auth_session', JSON.stringify(sessionPayload));
+        await sendLocalNotification(
+          'Đăng nhập thành công',
+          `Chào mừng ${resolvedUser.name}! Tài khoản của bạn có ${resolvedUser.credits.total} Credit.`
+        );
+        Alert.alert(
+          'Đăng nhập thành công',
+          `Chào mừng ${resolvedUser.name}!\nTài khoản đồng bộ với ${resolvedUser.credits.total} Credit.`
+        );
+      };
+
+      // Polling ngầm mỗi 1.5s phòng trường hợp Custom Tabs chặn exp:// redirect
+      pollTimer = setInterval(async () => {
+        if (completedViaPoll) return;
+        const polled = await pollAuthSession(cleanServer, requestId);
+        if (polled && polled.access_token) {
+          await applyAuthSuccess(
+            polled.access_token,
+            polled.refresh_token,
+            polled.user_info
+          );
+        }
+      }, 1500);
+
       const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUrl);
+      if (pollTimer) clearInterval(pollTimer);
+
+      if (completedViaPoll) {
+        return;
+      }
 
       if (result.type === 'success' && result.url) {
         const url = result.url;
@@ -101,32 +160,30 @@ export const ProfileScreen: React.FC = () => {
         const refreshToken = params.get('refresh_token') || '';
 
         if (token) {
-          const userInfo = await fetchUserInfo(cleanServer, token);
-          dispatch(
-            loginSuccess({
-              user: userInfo,
-              accessToken: token,
-              refreshToken,
-            })
-          );
-          await sendLocalNotification(
-            'Đăng nhập Google thành công',
-            `Chào mừng ${userInfo.name}! Tài khoản của bạn có ${userInfo.credits.total} Credit.`
-          );
-          Alert.alert(
-            'Đăng nhập Google thành công',
-            `Chào mừng ${userInfo.name}!\nTài khoản đồng bộ với ${userInfo.credits.total} Credit.`
-          );
-        } else {
-          Alert.alert('Lỗi đăng nhập', 'Không tìm thấy thông tin xác thực từ server.');
+          await applyAuthSuccess(token, refreshToken);
+          return;
         }
       }
+
+      // Kiểm tra lại 1 lần cuối qua poll_session nếu người dùng vừa bấm đóng trình duyệt sau khi đăng nhập xong
+      const finalPoll = await pollAuthSession(cleanServer, requestId);
+      if (finalPoll && finalPoll.access_token) {
+        await applyAuthSuccess(
+          finalPoll.access_token,
+          finalPoll.refresh_token,
+          finalPoll.user_info
+        );
+      } else if (result.type === 'success') {
+        Alert.alert('Lỗi đăng nhập', 'Không tìm thấy thông tin xác thực từ server.');
+      }
     } catch (err: any) {
+      if (pollTimer) clearInterval(pollTimer);
       Alert.alert(
         'Lỗi đăng nhập Google',
         err.message || 'Không thể mở cửa sổ đăng nhập Google. Hãy kiểm tra kết nối tới Server PC.'
       );
     } finally {
+      if (pollTimer) clearInterval(pollTimer);
       setLoggingIn(false);
     }
   };
@@ -144,13 +201,13 @@ export const ProfileScreen: React.FC = () => {
       const refreshToken = res.refresh_token || (res as any).tokens?.refresh_token;
 
       if (userInfo && token) {
-        dispatch(
-          loginSuccess({
-            user: userInfo,
-            accessToken: token,
-            refreshToken: refreshToken || '',
-          })
-        );
+        const sessionPayload = {
+          user: userInfo,
+          accessToken: token,
+          refreshToken: refreshToken || '',
+        };
+        dispatch(loginSuccess(sessionPayload));
+        await saveAppSetting('auth_session', JSON.stringify(sessionPayload));
         await sendLocalNotification(
           'Đăng nhập Dev MMA301 thành công',
           `Chào mừng ${userInfo.name}! Bạn được cấp ${userInfo.credits.total} Credit để dịch truyện.`
@@ -177,8 +234,9 @@ export const ProfileScreen: React.FC = () => {
       {
         text: 'Đăng xuất',
         style: 'destructive',
-        onPress: () => {
+        onPress: async () => {
           dispatch(logout());
+          await saveAppSetting('auth_session', '');
           Alert.alert('Thông báo', 'Đã đăng xuất tài khoản.');
         },
       },
@@ -304,16 +362,7 @@ export const ProfileScreen: React.FC = () => {
           </View>
         ) : (
           <View style={styles.authBtnGroup}>
-            {user && user.email.startsWith('student@') && (
-              <View style={styles.demoNotice}>
-                <Ionicons name="information-circle" size={16} color="#FBBF24" />
-                <Text style={styles.demoNoticeText}>
-                  Đang dùng tài khoản Sinh viên demo. Bạn có thể bấm nút dưới để đăng nhập tài khoản Google của chính bạn!
-                </Text>
-              </View>
-            )}
-
-            {/* 1. NÚT ĐĂNG NHẬP GOOGLE */}
+            {/* NÚT ĐĂNG NHẬP GOOGLE */}
             <TouchableOpacity
               style={styles.googleLoginBtn}
               onPress={handleGoogleLogin}
@@ -321,68 +370,13 @@ export const ProfileScreen: React.FC = () => {
             >
               <Ionicons name="logo-google" size={20} color="#EA4335" />
               <Text style={styles.googleLoginBtnText}>
-                {user && !user.email.startsWith('student@')
+                {user
                   ? 'Đổi sang tài khoản Google khác'
                   : 'Đăng nhập với Google (Đồng bộ PC)'}
               </Text>
             </TouchableOpacity>
-
-            {/* 2. NÚT ĐĂNG NHẬP DEV MMA301 */}
-            <TouchableOpacity
-              style={styles.devLoginBtn}
-              onPress={() => handleDevLogin('student@mma301.fpt.edu.vn')}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="shield-checkmark-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.devLoginBtnText}>
-                Đăng nhập 1-Click (Sinh viên MMA301 • 20 Credit)
-              </Text>
-            </TouchableOpacity>
-
-            {/* 3. NHẬP EMAIL ĐỒNG BỘ TÀI KHOẢN TRỰC TIẾP */}
-            <View style={styles.directEmailCard}>
-              <Text style={styles.directEmailTitle}>Đồng bộ với Email Google của bạn trên PC:</Text>
-              <View style={styles.directEmailRow}>
-                <TextInput
-                  style={styles.directEmailInput}
-                  placeholder="Ví dụ: yourname@gmail.com"
-                  placeholderTextColor="#64748B"
-                  value={customEmail}
-                  onChangeText={setCustomEmail}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                />
-                <TouchableOpacity
-                  style={styles.directEmailBtn}
-                  onPress={() => {
-                    if (!customEmail.trim() || !customEmail.includes('@')) {
-                      Alert.alert('Lỗi', 'Vui lòng nhập địa chỉ email hợp lệ.');
-                      return;
-                    }
-                    handleDevLogin(customEmail.trim());
-                  }}
-                >
-                  <Text style={styles.directEmailBtnText}>Đồng bộ</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
           </View>
         )}
-
-        {/* Server Config & IP Banner */}
-        <TouchableOpacity
-          style={styles.serverRow}
-          onPress={() => setConfigModalVisible(true)}
-        >
-          <View style={styles.serverLeft}>
-            <Ionicons name="server-outline" size={20} color="#F97316" />
-            <View>
-              <Text style={styles.serverTitle}>Máy chủ PC Backend (FastAPI)</Text>
-              <Text style={styles.serverSubtitle}>{serverUrl}</Text>
-            </View>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
-        </TouchableOpacity>
 
         {/* SQLite Reading History Header */}
         <View style={styles.historyHeader}>
@@ -430,7 +424,10 @@ export const ProfileScreen: React.FC = () => {
         visible={configModalVisible}
         currentUrl={serverUrl}
         onClose={() => setConfigModalVisible(false)}
-        onSave={(newUrl) => dispatch(setServerUrl(newUrl))}
+        onSave={async (newUrl) => {
+          dispatch(setServerUrl(newUrl));
+          await saveAppSetting('server_url', newUrl);
+        }}
       />
     </SafeAreaView>
   );

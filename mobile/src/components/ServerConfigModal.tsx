@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Modal,
   View,
@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { checkServerHealth } from '../api/comicApi';
+import { detectDefaultServerUrl } from '../store/settingsSlice';
 
 interface ServerConfigModalProps {
   visible: boolean;
@@ -31,6 +32,15 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
     ok: boolean;
     message: string;
   } | null>(null);
+
+  const autoDetectedUrl = detectDefaultServerUrl();
+
+  useEffect(() => {
+    if (visible && currentUrl) {
+      setUrl(currentUrl);
+      setTestResult(null);
+    }
+  }, [visible, currentUrl]);
 
   const handleTestConnection = async () => {
     try {
@@ -105,11 +115,29 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
           <Text style={styles.presetLabel}>Gợi ý nhanh:</Text>
           <View style={styles.presetRow}>
             <TouchableOpacity
-              style={styles.presetBtn}
-              onPress={() => setUrl('http://172.20.10.4:8000')}
+              style={[styles.presetBtn, { borderColor: '#F97316', backgroundColor: '#FFF7ED' }]}
+              onPress={() => setUrl('https://glorious-apple-unissued.ngrok-free.dev')}
             >
-              <Text style={styles.presetText}>Wi-Fi hiện tại (172.20.10.4)</Text>
+              <Text style={[styles.presetText, { color: '#EA580C', fontWeight: '700' }]}>
+                🌐 Ngrok Tunnel Cố Định (HTTPS)
+              </Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.presetBtn}
+              onPress={() => setUrl(autoDetectedUrl)}
+            >
+              <Text style={styles.presetText}>
+                Wi-Fi hiện tại ({autoDetectedUrl.replace(/^https?:\/\//, '').replace(/:\d+$/, '')})
+              </Text>
+            </TouchableOpacity>
+            {autoDetectedUrl !== 'http://192.168.2.42:8000' && (
+              <TouchableOpacity
+                style={styles.presetBtn}
+                onPress={() => setUrl('http://192.168.2.42:8000')}
+              >
+                <Text style={styles.presetText}>Wi-Fi Laptop (192.168.2.42)</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={styles.presetBtn}
               onPress={() => setUrl('http://10.0.2.2:8000')}
