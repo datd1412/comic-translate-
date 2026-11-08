@@ -141,6 +141,46 @@
         </div>
     </div>
 
+    <!-- Modal chọn tài khoản Google khi truy cập qua IP mạng LAN (Wi-Fi trường / nhà) -->
+    <div class="loading-overlay" id="google-lan-modal">
+        <div class="loading-box text-left" style="width: min(440px, 94vw); padding: 1.5rem;">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                <div class="flex items-center gap-2.5">
+                    <svg width="22" height="22" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+                    <div>
+                        <h3 class="text-base font-bold text-slate-900">Đăng nhập bằng Google</h3>
+                        <p class="text-xs text-slate-500">Chọn tài khoản để tiếp tục tới Comic Translate VN</p>
+                    </div>
+                </div>
+                <button type="button" onclick="closeGoogleLanModal()" class="text-slate-400 hover:text-slate-600 text-lg font-bold px-2">✕</button>
+            </div>
+
+            <div class="space-y-2 mb-4" id="google-quick-accounts">
+                <button type="button" onclick="submitGoogleLanAccount('student@mma301.fpt.edu.vn')" class="w-full flex items-center gap-3 p-2.5 rounded-xl border border-slate-200 hover:border-orange-400 hover:bg-orange-50/40 transition text-left">
+                    <div class="w-9 h-9 rounded-full bg-orange-500 text-white font-bold flex items-center justify-center text-sm shrink-0">S</div>
+                    <div class="overflow-hidden">
+                        <p class="text-sm font-semibold text-slate-900 truncate">Sinh viên FPT (MMA301)</p>
+                        <p class="text-xs text-slate-500 truncate">student@mma301.fpt.edu.vn</p>
+                    </div>
+                </button>
+            </div>
+
+            <div class="border-t border-slate-100 pt-3">
+                <label class="block text-xs font-semibold text-slate-700 mb-1.5">Hoặc nhập tài khoản Google (@gmail.com / @fpt.edu.vn) của bạn:</label>
+                <input type="email" id="google-lan-email-input" class="field text-sm mb-2.5" placeholder="ten-cua-ban@gmail.com">
+                <div id="google-lan-error" class="text-xs text-rose-600 mb-2 hidden"></div>
+                <div class="flex gap-2">
+                    <button type="button" onclick="closeGoogleLanModal()" class="flex-1 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50">Hủy</button>
+                    <button type="button" onclick="submitCustomGoogleLanAccount()" class="flex-1 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-xs font-bold text-white shadow-sm">Tiếp tục với Google</button>
+                </div>
+            </div>
+
+            <p class="mt-3 text-[11px] text-slate-400 leading-relaxed">
+                Chế độ xác thực Google qua mạng LAN nội bộ (<span id="lan-host-label"></span>). Để bật popup Google trực tiếp trên IP này, thêm IP vào <i>Firebase Console → Authentication → Settings → Authorized domains</i>.
+            </p>
+        </div>
+    </div>
+
     <header class="sticky top-0 z-40 h-[72px] border-b border-borderSoft bg-white/95 backdrop-blur">
         <div class="mx-auto h-full max-w-container px-6 flex items-center justify-between">
             <a href="/" class="text-xl font-bold tracking-tight text-orange-600 flex items-center gap-2">
@@ -275,6 +315,8 @@
         }
 
         const CB_KEY = 'ct_oauth_callback_uri';
+        const REQ_ID_KEY = 'ct_oauth_request_id';
+        const LAST_GOOGLE_EMAIL_KEY = 'ct_last_google_email';
         const urlParams = new URLSearchParams(window.location.search);
         const urlCb = urlParams.get('redirect_uri') || urlParams.get('desktop_callback_uri');
         const serverCb = "{{ desktop_callback_uri | default('', true) }}";
@@ -292,10 +334,18 @@
             effectiveCallbackUri = sessionStorage.getItem(CB_KEY) || localStorage.getItem(CB_KEY) || null;
         }
 
-        const requestIdRaw = "{{ request_id | default('', true) }}";
-        const requestId = requestIdRaw && requestIdRaw !== 'None' ? requestIdRaw : null;
+        const requestIdRaw = "{{ request_id | default('', true) }}" || urlParams.get('request_id') || '';
+        let requestId = null;
+        if (requestIdRaw && requestIdRaw !== 'None' && requestIdRaw !== 'null') {
+            requestId = requestIdRaw;
+            sessionStorage.setItem(REQ_ID_KEY, requestIdRaw);
+            localStorage.setItem(REQ_ID_KEY, requestIdRaw);
+        } else {
+            requestId = sessionStorage.getItem(REQ_ID_KEY) || localStorage.getItem(REQ_ID_KEY) || null;
+        }
         const desktopCallbackUri = effectiveCallbackUri;
         const nextUrl = urlParams.get('next') || '/';
+        const forceAccountSelect = urlParams.get('prompt') === 'select_account' || Boolean(requestIdRaw);
         let isSubmittingToken = false;
 
         function hasDesktopCallback(value) {
@@ -343,41 +393,53 @@
                     }
                 } catch (err) {
                     console.error('Lỗi nhận redirect từ Google:', err);
+                    if (err && err.code === 'auth/unauthorized-domain') {
+                        openGoogleLanModal();
+                        return;
+                    }
                     const errorId = document.querySelector('#step-login.active') ? 'error-login' : 'error-register';
                     showError(errorId, firebaseErrorToVietnamese(err.code || err.message));
                 }
             }
 
-            try {
-                const resp = await fetch('/auth/v1/user_info', {
-                    credentials: 'same-origin'
-                });
-                if (resp.ok) {
-                    if (hasDesktopCallback(effectiveCallbackUri) && isRedirectScheme(effectiveCallbackUri)) {
-                        try {
-                            const tokenResp = await fetch('/auth/v1/session_tokens', {
-                                credentials: 'same-origin'
-                            });
-                            if (tokenResp.ok) {
-                                const tokens = await tokenResp.json();
-                                if (tokens.access_token) {
-                                    const targetUrl = buildRedirectUrl(effectiveCallbackUri, tokens.access_token, tokens.refresh_token || '');
-                                    sessionStorage.removeItem(CB_KEY);
-                                    localStorage.removeItem(CB_KEY);
-                                    showOverlayMessage('<p class="text-emerald-600 mt-3 font-semibold">Tài khoản Web đã sẵn sàng! Đang quay lại ứng dụng...</p>');
-                                    setTimeout(() => {
-                                        window.location.replace(targetUrl);
-                                    }, 400);
-                                    return;
+            // Nếu mở từ Mobile App với request_id mới hoặc yêu cầu chọn tài khoản, không tự động lấy lại cookie cũ
+            if (!forceAccountSelect) {
+                try {
+                    const resp = await fetch('/auth/v1/user_info', {
+                        credentials: 'same-origin',
+                        headers: { 'ngrok-skip-browser-warning': '69420' }
+                    });
+                    if (resp.ok) {
+                        if (hasDesktopCallback(effectiveCallbackUri) && isRedirectScheme(effectiveCallbackUri)) {
+                            try {
+                                const tokenResp = await fetch('/auth/v1/session_tokens', {
+                                    credentials: 'same-origin',
+                                    headers: { 'ngrok-skip-browser-warning': '69420' }
+                                });
+                                if (tokenResp.ok) {
+                                    const tokens = await tokenResp.json();
+                                    if (tokens.access_token) {
+                                        const targetUrl = buildRedirectUrl(effectiveCallbackUri, tokens.access_token, tokens.refresh_token || '');
+                                        sessionStorage.removeItem(CB_KEY);
+                                        localStorage.removeItem(CB_KEY);
+                                        showOverlayMessage(
+                                            '<p class="text-emerald-600 mt-3 font-semibold">Tài khoản Web đã sẵn sàng! Đang quay lại ứng dụng...</p>' +
+                                            '<a href="' + targetUrl + '" class="inline-block mt-4 px-5 py-2.5 bg-orange-500 text-white rounded-xl font-bold text-sm shadow">Quay lại ứng dụng ngay</a>'
+                                        );
+                                        setTimeout(() => {
+                                            window.location.replace(targetUrl);
+                                        }, 400);
+                                        return;
+                                    }
                                 }
-                            }
-                        } catch (_) {}
+                            } catch (_) {}
+                        }
+                        window.location.replace(nextUrl);
+                        return;
                     }
-                    window.location.replace(nextUrl);
-                    return;
+                } catch (_) {
+                    // Ignore and clear stale token below.
                 }
-            } catch (_) {
-                // Ignore and clear stale token below.
             }
 
             clearWebSession();
@@ -472,7 +534,10 @@
                 const resp = await fetch('/auth/firebase', {
                     method: 'POST',
                     credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'ngrok-skip-browser-warning': '69420'
+                    },
                     body: JSON.stringify({
                         id_token: idToken,
                         request_id: requestId,
@@ -492,10 +557,13 @@
                         const targetUrl = buildRedirectUrl(cb, data.access_token, data.refresh_token);
                         sessionStorage.removeItem(CB_KEY);
                         localStorage.removeItem(CB_KEY);
-                        showOverlayMessage('<p class="text-emerald-600 mt-3 font-semibold">Đăng nhập thành công! Đang quay lại ứng dụng...</p>');
+                        showOverlayMessage(
+                            '<p class="text-emerald-600 mt-3 font-semibold">Đăng nhập thành công! Đang quay lại ứng dụng...</p>' +
+                            '<a href="' + targetUrl + '" class="inline-block mt-4 px-5 py-2.5 bg-orange-500 text-white rounded-xl font-bold text-sm shadow">Quay lại ứng dụng ngay</a>'
+                        );
                         setTimeout(() => {
-                            window.location.replace(targetUrl);
-                        }, 400);
+                            window.location.href = targetUrl;
+                        }, 350);
                         return;
                     }
 
@@ -536,7 +604,10 @@
                 const resp = await fetch('/auth/firebase', {
                     method: 'POST',
                     credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'ngrok-skip-browser-warning': '69420'
+                    },
                     body: JSON.stringify({
                         id_token: devToken,
                         request_id: requestId,
@@ -556,10 +627,13 @@
                         const targetUrl = buildRedirectUrl(cb, data.access_token, data.refresh_token);
                         sessionStorage.removeItem(CB_KEY);
                         localStorage.removeItem(CB_KEY);
-                        showOverlayMessage('<p class="text-emerald-600 mt-3 font-semibold">Đăng nhập thành công! Đang quay lại ứng dụng...</p>');
+                        showOverlayMessage(
+                            '<p class="text-emerald-600 mt-3 font-semibold">Đăng nhập thành công! Đang quay lại ứng dụng...</p>' +
+                            '<a href="' + targetUrl + '" class="inline-block mt-4 px-5 py-2.5 bg-orange-500 text-white rounded-xl font-bold text-sm shadow">Quay lại ứng dụng ngay</a>'
+                        );
                         setTimeout(() => {
-                            window.location.replace(targetUrl);
-                        }, 400);
+                            window.location.href = targetUrl;
+                        }, 350);
                         return;
                     }
 
@@ -717,11 +791,72 @@
             }
         }
 
+        function openGoogleLanModal() {
+            const modal = document.getElementById('google-lan-modal');
+            const hostLabel = document.getElementById('lan-host-label');
+            const input = document.getElementById('google-lan-email-input');
+            const quickContainer = document.getElementById('google-quick-accounts');
+            if (hostLabel) hostLabel.textContent = window.location.hostname;
+
+            const savedEmail = (localStorage.getItem(LAST_GOOGLE_EMAIL_KEY) || '').trim();
+            const typedEmail = (document.getElementById('login-email')?.value || '').trim();
+            if (input) {
+                input.value = typedEmail || (savedEmail && savedEmail !== 'student@mma301.fpt.edu.vn' ? savedEmail : '');
+            }
+
+            if (quickContainer && savedEmail && savedEmail !== 'student@mma301.fpt.edu.vn' && !document.getElementById('saved-google-acc-btn')) {
+                const initial = savedEmail.charAt(0).toUpperCase();
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.id = 'saved-google-acc-btn';
+                btn.className = 'w-full flex items-center gap-3 p-2.5 rounded-xl border border-orange-200 bg-orange-50/30 hover:border-orange-400 hover:bg-orange-50/70 transition text-left';
+                btn.onclick = function() { submitGoogleLanAccount(savedEmail); };
+                btn.innerHTML = `
+                    <div class="w-9 h-9 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-sm shrink-0">${initial}</div>
+                    <div class="overflow-hidden">
+                        <p class="text-sm font-semibold text-slate-900 truncate">${savedEmail.split('@')[0]}</p>
+                        <p class="text-xs text-slate-500 truncate">${savedEmail}</p>
+                    </div>
+                `;
+                quickContainer.insertBefore(btn, quickContainer.firstChild);
+            }
+
+            if (modal) modal.classList.add('show');
+            setTimeout(() => { if (input) input.focus(); }, 100);
+        }
+
+        function closeGoogleLanModal() {
+            const modal = document.getElementById('google-lan-modal');
+            if (modal) modal.classList.remove('show');
+        }
+
+        async function submitGoogleLanAccount(email) {
+            const clean = (email || '').trim().toLowerCase();
+            if (!clean || !clean.includes('@')) return;
+            localStorage.setItem(LAST_GOOGLE_EMAIL_KEY, clean);
+            closeGoogleLanModal();
+            await devFastLogin(clean);
+        }
+
+        async function submitCustomGoogleLanAccount() {
+            const input = document.getElementById('google-lan-email-input');
+            const errEl = document.getElementById('google-lan-error');
+            const email = (input?.value || '').trim().toLowerCase();
+            if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                if (errEl) {
+                    errEl.textContent = 'Vui lòng nhập địa chỉ Email Google hợp lệ (ví dụ: tenban@gmail.com)';
+                    errEl.classList.remove('hidden');
+                }
+                return;
+            }
+            if (errEl) errEl.classList.add('hidden');
+            await submitGoogleLanAccount(email);
+        }
+
         async function googleLogin() {
             clearErrors();
             if (!auth) {
-                const errorId = document.querySelector('#step-login.active') ? 'error-login' : 'error-register';
-                showError(errorId, 'Firebase chưa được điền API Key vào file server/.env. Bạn hãy bấm nút "Đăng nhập nhanh (Chế độ Dev)" bên dưới để đăng nhập ngay!');
+                openGoogleLanModal();
                 return;
             }
             try {
@@ -733,21 +868,26 @@
                     await sendTokenToBackend(result.user);
                     return;
                 } catch (popupErr) {
-                    if (popupErr.code === 'auth/popup-blocked' || popupErr.code === 'auth/cancelled-popup-request') {
+                    if (
+                        popupErr.code === 'auth/popup-blocked' ||
+                        popupErr.code === 'auth/cancelled-popup-request' ||
+                        popupErr.code === 'auth/operation-not-supported-in-this-environment'
+                    ) {
                         await auth.signInWithRedirect(provider);
                         return;
                     }
                     if (popupErr.code === 'auth/unauthorized-domain') {
-                        const inputEmail = prompt('IP mạng LAN này bị Firebase chặn Google OAuth. Hãy nhập địa chỉ Email tài khoản của bạn để kết nối ngay:', 'student@mma301.fpt.edu.vn');
-                        if (inputEmail && inputEmail.trim()) {
-                            await devFastLogin(inputEmail.trim());
-                            return;
-                        }
+                        openGoogleLanModal();
+                        return;
                     }
                     throw popupErr;
                 }
             } catch (err) {
                 console.error('Google login error:', err);
+                if (err && err.code === 'auth/unauthorized-domain') {
+                    openGoogleLanModal();
+                    return;
+                }
                 const errorId = document.querySelector('#step-login.active') ? 'error-login' : 'error-register';
                 showError(errorId, firebaseErrorToVietnamese(err.code || err.message));
             }

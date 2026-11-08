@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import { detectDefaultServerUrl } from '../store/settingsSlice';
 
 export interface PayOSOrder {
   order_id: string;
@@ -13,7 +14,7 @@ export interface PayOSOrder {
 
 export interface TranslatedBlock {
   id: number;
-  bbox: [number, number, number, number]; // [ymin, xmin, ymax, xmax]
+  bbox: [number, number, number, number]; // [x1, y1, x2, y2]
   source_text: string;
   translation: string;
 }
@@ -82,6 +83,7 @@ export const checkServerStatus = async (
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 4000);
     const res = await fetch(`${serverUrl}/healthz`, {
+      headers: { 'ngrok-skip-browser-warning': '69420' },
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
@@ -111,18 +113,88 @@ export const loginWithFirebaseToken = async (
   serverUrl: string,
   idToken: string
 ): Promise<AuthResponse> => {
-  const res = await fetch(`${serverUrl}/auth/firebase`, {
+  const cleanServer = (serverUrl || detectDefaultServerUrl()).replace(/\/$/, '');
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(`${cleanServer}/auth/firebase`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': '69420',
+      },
+      body: JSON.stringify({ id_token: idToken }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || err.error || `Lỗi đăng nhập (HTTP ${res.status})`);
+    }
+
+    return await res.json();
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw new Error(
+        `Máy chủ (${cleanServer}) không phản hồi sau 8 giây. Hãy kiểm tra cửa sổ Terminal chạy Server trên PC (nhấn Enter nếu cửa sổ PowerShell đang bị đóng băng).`
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
+/**
+ * Làm mới Access Token bằng Refresh Token khi hết hạn
+ */
+export const refreshAccessToken = async (
+  serverUrl: string,
+  refreshToken: string
+): Promise<{ access_token: string; refresh_token: string }> => {
+  const cleanServer = (serverUrl || detectDefaultServerUrl()).replace(/\/$/, '');
+  const res = await fetch(`${cleanServer}/auth/v1/refresh`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id_token: idToken }),
+    headers: {
+      'Content-Type': 'application/json',
+      'ngrok-skip-browser-warning': '69420',
+    },
+    body: JSON.stringify({ refresh_token: refreshToken }),
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || err.error || `Lỗi đăng nhập (HTTP ${res.status})`);
+    throw new Error(`Refresh token thất bại (HTTP ${res.status})`);
   }
 
   return await res.json();
+};
+
+/**
+ * Kiểm tra trạng thái đăng nhập theo request_id (dự phòng khi Custom Tabs chặn redirect exp://)
+ */
+export const pollAuthSession = async (
+  serverUrl: string,
+  requestId: string
+): Promise<AuthResponse | null> => {
+  try {
+    const cleanServer = (serverUrl || detectDefaultServerUrl()).replace(/\/$/, '');
+    const res = await fetch(
+      `${cleanServer}/auth/v1/poll_session?request_id=${encodeURIComponent(requestId)}`,
+      { headers: { 'ngrok-skip-browser-warning': '69420' } }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data && data.status === 'completed' && data.access_token) {
+      return {
+        access_token: data.access_token,
+        refresh_token: data.refresh_token || '',
+        user_info: data.user_info,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 };
 
 /**
@@ -132,34 +204,68 @@ export const fetchUserInfo = async (
   serverUrl: string,
   accessToken: string
 ): Promise<UserInfo> => {
-  const res = await fetch(`${serverUrl}/auth/v1/user_info`, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: 'application/json',
-    },
-  });
+  const cleanServer = (serverUrl || detectDefaultServerUrl()).replace(/\/$/, '');
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(`${cleanServer}/auth/v1/user_info`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+        'ngrok-skip-browser-warning': '69420',
+      },
+      signal: controller.signal,
+    });
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Lỗi lấy thông tin tài khoản (HTTP ${res.status})`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `Lỗi lấy thông tin tài khoản (HTTP ${res.status})`);
+    }
+
+    return await res.json();
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  return await res.json();
 };
 
 /**
+ * Sinh danh sách URL CDN dự phòng cho Baozimh khi node phụ (như s1-mha1-nlams.bzcdn.net)
+ * bị nhà mạng chặn hoặc từ chối kết nối (Connection refused 117.55.203.31:443).
+ */
+function buildCdnFallbackCandidates(rawUrl: string): string[] {
+  const normalized = rawUrl.replace(
+    /^https?:\/\/s([12])-[a-z0-9-]+\.bzcdn\.net\//i,
+    'https://s$1.bzcdn.net/'
+  );
+  const candidates: string[] = [];
+  const pushUnique = (u: string) => {
+    if (u && !candidates.includes(u)) {
+      candidates.push(u);
+    }
+  };
+
+  pushUnique(normalized);
+  if (/^https?:\/\/[^/]*bzcdn\.net\//i.test(rawUrl)) {
+    pushUnique(rawUrl.replace(/^https?:\/\/[^/]*bzcdn\.net\//i, 'https://s2.bzcdn.net/'));
+    pushUnique(rawUrl.replace(/^https?:\/\/[^/]*bzcdn\.net\//i, 'https://s1.bzcdn.net/'));
+  }
+  pushUnique(rawUrl);
+  return candidates;
+}
+
+/**
  * Cơ chế gửi ảnh chuẩn 100% của Extension (giống fetchImageBlobInBackground):
- * - Nhận imageUrl và refererOrigin từ WebView.
- * - Tải trực tiếp file nhị phân nguyên bản (Blob/File) về cache.
- * - Đóng vào FormData chuẩn nhị phân (KHÔNG dùng chuỗi Base64).
- * - Gửi lên Backend FastAPI (/api/v1/page/translate).
+ * - Ưu tiên nhận imageDataUrl trích xuất trực tiếp từ bộ nhớ đệm Chromium của WebView.
+ * - Nếu cần tải lại từ CDN, tự động chuẩn hóa & xoay vòng qua các mirror sống (s1.bzcdn.net / s2.bzcdn.net).
+ * - Gửi file nhị phân lên Backend FastAPI (/api/v1/page/translate).
  */
 export const translatePageWithImageUrl = async (
   serverUrl: string,
   accessToken: string,
   params: {
     imageUrl: string;
+    imageDataUrl?: string;
     refererOrigin?: string;
     langPair: string;
     readingDirection?: 'rtl' | 'ltr';
@@ -173,34 +279,71 @@ export const translatePageWithImageUrl = async (
     cleanImgUrl = params.refererOrigin.replace(/\/$/, '') + cleanImgUrl;
   }
 
-  const fileExt = cleanImgUrl.toLowerCase().includes('.png') ? 'png' : 'jpg';
+  const inlineDataUrl =
+    params.imageDataUrl && params.imageDataUrl.startsWith('data:image/')
+      ? params.imageDataUrl
+      : cleanImgUrl.startsWith('data:image/')
+      ? cleanImgUrl
+      : '';
+
+  const lowerUrl = (inlineDataUrl || cleanImgUrl).toLowerCase();
+  const fileExt = lowerUrl.includes('png')
+    ? 'png'
+    : lowerUrl.includes('webp')
+    ? 'webp'
+    : 'jpg';
   const localFilePath = `${FileSystem.cacheDirectory}ctvn_page_${Date.now()}.${fileExt}`;
 
-  // 1. Tải file nhị phân từ CDN (hỗ trợ cả Data URI và CDN có header Referer)
-  if (cleanImgUrl.startsWith('data:')) {
-    const base64Data = cleanImgUrl.split(',')[1] || '';
+  // 1. Lưu file nhị phân từ WebView cache (data URI) hoặc tải từ CDN với cơ chế xoay vòng mirror
+  if (inlineDataUrl) {
+    const base64Data = inlineDataUrl.split(',')[1] || '';
     await FileSystem.writeAsStringAsync(localFilePath, base64Data, {
       encoding: FileSystem.EncodingType.Base64,
     });
   } else {
-    const downloadResult = await FileSystem.downloadAsync(
-      cleanImgUrl,
-      localFilePath,
-      {
-        headers: {
-          Referer: params.refererOrigin || 'https://www.baozimh.org/',
-          Origin: params.refererOrigin || 'https://www.baozimh.org',
-        },
-      }
-    );
+    const candidates = buildCdnFallbackCandidates(cleanImgUrl);
+    let downloadedOk = false;
+    let lastCdnErr = '';
 
-    if (downloadResult.status !== 200) {
-      throw new Error(`Không thể tải ảnh truyện từ CDN (HTTP ${downloadResult.status})`);
+    for (const candidateUrl of candidates) {
+      try {
+        const downloadResult = await FileSystem.downloadAsync(
+          candidateUrl,
+          localFilePath,
+          {
+            headers: {
+              Referer: params.refererOrigin || 'https://cn.baozimh.com/',
+              Origin: params.refererOrigin || 'https://cn.baozimh.com',
+              'User-Agent':
+                'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
+            },
+          }
+        );
+
+        if (downloadResult.status === 200) {
+          downloadedOk = true;
+          break;
+        }
+        lastCdnErr = `HTTP ${downloadResult.status} từ ${candidateUrl}`;
+      } catch (err: any) {
+        lastCdnErr = err?.message || String(err);
+      }
+    }
+
+    if (!downloadedOk) {
+      throw new Error(
+        `[CDN] Không thể tải ảnh truyện từ máy chủ ảnh gốc (${lastCdnErr})`
+      );
     }
   }
 
-  const cleanServerUrl = (serverUrl || 'http://172.20.10.3:8000').replace(/\/$/, '');
-  const mimeType = fileExt === 'png' ? 'image/png' : 'image/jpeg';
+  const cleanServerUrl = (serverUrl || detectDefaultServerUrl()).replace(/\/$/, '');
+  const mimeType =
+    fileExt === 'png'
+      ? 'image/png'
+      : fileExt === 'webp'
+      ? 'image/webp'
+      : 'image/jpeg';
   const fileName = `page.${fileExt}`;
   const idempotencyKey = `ctvn_mobile_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   const contextJson = JSON.stringify({
@@ -210,9 +353,10 @@ export const translatePageWithImageUrl = async (
 
   const effectiveToken = accessToken || 'dev_token_student@mma301.fpt.edu.vn';
 
-  // 2. Gửi file lên server: Ưu tiên FileSystem.uploadAsync (Native module tránh lỗi FormDataPart của Android)
+  // 2. Gửi file lên server bằng Native FileSystem.uploadAsync
+  let uploadResult: FileSystem.FileSystemUploadResult;
   try {
-    const uploadResult = await FileSystem.uploadAsync(
+    uploadResult = await FileSystem.uploadAsync(
       `${cleanServerUrl}/api/v1/page/translate`,
       localFilePath,
       {
@@ -229,59 +373,22 @@ export const translatePageWithImageUrl = async (
         headers: { Authorization: `Bearer ${effectiveToken}` },
       }
     );
-
+  } finally {
     FileSystem.deleteAsync(localFilePath, { idempotent: true }).catch(() => {});
-
-    if (uploadResult.status === 200) {
-      return JSON.parse(uploadResult.body);
-    }
-
-    let errDetail = uploadResult.body;
-    try {
-      const parsed = JSON.parse(uploadResult.body);
-      errDetail = parsed.detail || parsed.error || errDetail;
-    } catch {}
-    throw new Error(errDetail || `Lỗi dịch trang từ server (HTTP ${uploadResult.status})`);
-  } catch (nativeErr: any) {
-    // 3. Fallback: Nếu native uploadAsync gặp sự cố, dùng Fetch với object FormData đúng chuẩn React Native
-    try {
-      const formData = new FormData();
-      formData.append('image', {
-        uri: localFilePath,
-        name: fileName,
-        type: mimeType,
-      } as any);
-      formData.append('lang_pair', params.langPair || 'zh-vi');
-      formData.append('idempotency_key', idempotencyKey);
-      if (params.readingDirection) {
-        formData.append('reading_direction', params.readingDirection);
-      }
-      formData.append('context_json', contextJson);
-
-      const headers: Record<string, string> = {
-        Accept: 'application/json',
-        Authorization: `Bearer ${effectiveToken}`,
-      };
-
-      const res = await fetch(`${cleanServerUrl}/api/v1/page/translate`, {
-        method: 'POST',
-        body: formData,
-        headers,
-      });
-
-      FileSystem.deleteAsync(localFilePath, { idempotent: true }).catch(() => {});
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || err.error || `Lỗi từ server (HTTP ${res.status})`);
-      }
-
-      return await res.json();
-    } catch (fetchErr: any) {
-      FileSystem.deleteAsync(localFilePath, { idempotent: true }).catch(() => {});
-      throw new Error(fetchErr.message || nativeErr.message || 'Lỗi gửi ảnh dịch');
-    }
   }
+
+  if (uploadResult.status === 200) {
+    return JSON.parse(uploadResult.body);
+  }
+
+  let errDetail = uploadResult.body;
+  try {
+    const parsed = JSON.parse(uploadResult.body);
+    errDetail = parsed.detail || parsed.error || errDetail;
+  } catch {}
+  throw new Error(
+    `${errDetail || 'Lỗi dịch trang từ server'} (HTTP ${uploadResult.status})`
+  );
 };
 
 /**
@@ -290,7 +397,9 @@ export const translatePageWithImageUrl = async (
 export const fetchTopupPackages = async (
   serverUrl: string
 ): Promise<TopupPackage[]> => {
-  const res = await fetch(`${serverUrl}/billing/v1/packages`);
+  const res = await fetch(`${serverUrl}/billing/v1/packages`, {
+    headers: { 'ngrok-skip-browser-warning': '69420' },
+  });
   if (!res.ok) {
     throw new Error('Không thể tải danh sách gói nạp từ server');
   }
@@ -311,6 +420,7 @@ export const createPayOSCheckout = async (
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`,
+      'ngrok-skip-browser-warning': '69420',
     },
     body: JSON.stringify({ package_code: packageCode }),
   });
@@ -334,6 +444,7 @@ export const getOrderStatus = async (
   const res = await fetch(`${serverUrl}/billing/v1/payos/orders/${orderCode}`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
+      'ngrok-skip-browser-warning': '69420',
     },
   });
 

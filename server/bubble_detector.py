@@ -179,9 +179,31 @@ class BubbleDetector:
             elif label_id in [1, 2]:
                 text_boxes.append(item)
 
-        # Ưu tiên lấy bubble_boxes vì nó bao quát toàn bộ vùng trắng cần đè chữ
-        # Nếu trang không có bubble rõ rệt nhưng có text_free/text_bubble thì lấy text_boxes
-        target_boxes = bubble_boxes if bubble_boxes else text_boxes
+        # Hợp nhất thông minh bubble_boxes (label 0) và text_boxes (label 1, 2):
+        # - Ưu tiên bubble_boxes vì bao quát trọn vùng trắng cần đè chữ.
+        # - Giữ thêm các text_boxes (khung dẫn chuyện vuông, chữ ngoài bóng) nếu chúng KHÔNG nằm chồng lấn bên trong bubble_boxes.
+        if bubble_boxes:
+            target_boxes = list(bubble_boxes)
+            for tb in text_boxes:
+                if tb[4] < max(min_confidence, 0.45):
+                    continue
+                tx1, ty1, tx2, ty2 = tb[:4]
+                t_area = max(1.0, (tx2 - tx1) * (ty2 - ty1))
+                covered = False
+                for bb in bubble_boxes:
+                    bx1, by1, bx2, by2 = bb[:4]
+                    ix1, iy1 = max(tx1, bx1), max(ty1, by1)
+                    ix2, iy2 = min(tx2, bx2), min(ty2, by2)
+                    if ix2 > ix1 and iy2 > iy1:
+                        inter = (ix2 - ix1) * (iy2 - iy1)
+                        if inter / t_area >= 0.30:
+                            covered = True
+                            break
+                if not covered:
+                    target_boxes.append(tb)
+        else:
+            target_boxes = text_boxes
+
         if not target_boxes:
             return []
 
@@ -189,22 +211,31 @@ class BubbleDetector:
         nms_boxes = containment_nms(target_boxes, threshold=0.85)
         filtered_boxes = filter_speckle(nms_boxes, page_h=h)
 
-        # Sắp xếp theo thứ tự đọc
-        is_rtl = reading_direction.strip().lower() == "rtl"
-        if is_rtl:
-            # Manga Nhật/Manhua: từ trên xuống dưới, từ phải sang trái (y tăng dần, x giảm dần)
-            sorted_boxes = sorted(filtered_boxes, key=lambda b: (b[1], -b[0]))
-        else:
-            # Manhwa/Webtoon: từ trên xuống dưới, từ trái sang phải (y tăng dần, x tăng dần)
-            sorted_boxes = sorted(filtered_boxes, key=lambda b: (b[1], b[0]))
-
-        results: list[dict[str, Any]] = []
-        for idx, b in enumerate(sorted_boxes):
-            results.append({
+        # Sắp xếp theo thứ tự đọc chuẩn bằng thuật toán Vertical Overlap Clustering (reading_order.py)
+        prelim_results: list[dict[str, Any]] = []
+        for idx, b in enumerate(filtered_boxes):
+            prelim_results.append({
                 "id": idx,
                 "bbox": [int(round(b[0])), int(round(b[1])), int(round(b[2])), int(round(b[3]))],
                 "confidence": round(b[4], 3),
             })
+
+        try:
+            from reading_order import sort_blocks_by_reading_order
+            sorted_results = sort_blocks_by_reading_order(
+                prelim_results, reading_direction=reading_direction
+            )
+        except Exception:
+            is_rtl = reading_direction.strip().lower() == "rtl"
+            sorted_results = sorted(
+                prelim_results,
+                key=lambda item: (item["bbox"][1], -item["bbox"][0] if is_rtl else item["bbox"][0]),
+            )
+
+        results: list[dict[str, Any]] = []
+        for idx, item in enumerate(sorted_results):
+            item["id"] = idx
+            results.append(item)
 
         return results
 

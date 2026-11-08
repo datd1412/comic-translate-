@@ -296,6 +296,8 @@ async def translate_comic_page(
         used_multimodal = False
 
         # Ưu tiên: Pipeline Multimodal Vision (Libre Manga Translator) siêu nhẹ, bỏ qua OCR
+        multimodal_error: Exception | None = None
+        detected_bubbles: list[dict[str, Any]] = []
         if getattr(settings, "ENABLE_BUBBLE_DETECTOR", True) and settings.LLM_PROVIDER == "gemini" and settings.GEMINI_API_KEY:
             try:
                 from bubble_detector import get_bubble_detector
@@ -318,13 +320,17 @@ async def translate_comic_page(
                             http_client=http_client,
                         )
                         used_multimodal = True
+                    else:
+                        used_multimodal = True
+                        translated_blocks = []
             except Exception as detector_err:
                 import traceback
                 print(f"[WARN] Multimodal Vision pipeline error, falling back to OCR: {detector_err}")
                 traceback.print_exc()
+                multimodal_error = detector_err
                 used_multimodal = False
 
-        # Fallback về OCR truyền thống (PaddleOCR) nếu không chạy multimodal hoặc trang không có bóng thoại
+        # Fallback về OCR truyền thống (PaddleOCR) nếu không chạy multimodal
         if not used_multimodal:
             try:
                 ocr_result = await call_ocr_service(
@@ -336,6 +342,10 @@ async def translate_comic_page(
                 )
             except (httpx.ConnectError, httpx.HTTPError, HTTPException) as ocr_err:
                 print(f"[INFO] OCR service offline, continuing standalone: {ocr_err}")
+                # Nếu đã phát hiện được bóng thoại nhưng Gemini gặp lỗi và OCR cũng offline,
+                # phải ném lại lỗi thật của Gemini thay vì giả vờ trả về blocks=[] (không có thoại)!
+                if multimodal_error is not None and detected_bubbles:
+                    raise multimodal_error from ocr_err
                 ocr_result = {"blocks": []}
             ocr_blocks = ocr_result.get("blocks") or []
 
@@ -436,16 +446,17 @@ async def translate_comic_page(
             note=f"Refund because no speech bubbles found (key={idem_key})",
         )
 
-    # 8. Lưu Cache (chỉ văn bản) và Idempotency record
-    expires_at = utcnow() + timedelta(seconds=settings.TRANSLATE_CACHE_TTL_SECONDS)
-    new_cache = TranslationCache(
-        user_id=current_user.id,
-        image_hash=cache_image_hash,
-        lang_pair=normalized_pair,
-        blocks_json=json.dumps(translated_blocks, ensure_ascii=False),
-        expires_at=expires_at,
-    )
-    db.add(new_cache)
+    # 8. Chỉ lưu Cache khi thực sự có khối thoại đã dịch (tránh lưu cache rỗng làm kẹt trang)
+    if translated_blocks:
+        expires_at = utcnow() + timedelta(seconds=settings.TRANSLATE_CACHE_TTL_SECONDS)
+        new_cache = TranslationCache(
+            user_id=current_user.id,
+            image_hash=cache_image_hash,
+            lang_pair=normalized_pair,
+            blocks_json=json.dumps(translated_blocks, ensure_ascii=False),
+            expires_at=expires_at,
+        )
+        db.add(new_cache)
 
     db.refresh(current_user)
     response_payload = {
